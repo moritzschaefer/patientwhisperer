@@ -1,0 +1,120 @@
+"""
+Outcome Prediction Benchmark: Blinded per-patient agent predictions.
+
+Five conditions:
+  1. cells_only         - molecular features only
+  2. cells_pretreat     - molecular + pre-treatment clinical
+  3. cells_all          - molecular + all clinical (incl. CRS/ICANS)
+  4. clinical_pretreat  - pre-treatment clinical only
+  5. clinical_all       - all clinical only
+
+Usage (from a SLURM compute node):
+    conda run -n cellwhisperer snakemake --profile sm7_slurm -j 10 all
+"""
+
+CONDITIONS = ["cells_only", "cells_pretreat", "cells_all", "clinical_pretreat", "clinical_all"]
+
+
+rule all:
+    input:
+        expand("results/{cond}/evaluation_results.json", cond=CONDITIONS),
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 0: Prepare Blinded Data
+# ══════════════════════════════════════════════════════════════════════════════
+
+checkpoint prepare_blinded_data:
+    """Strip response variables and create per-condition patient data."""
+    input:
+        script="step0_prepare_blinded_data.py",
+    output:
+        ground_truth="data/ground_truth.json",
+        **{f"patient_list_{c}": f"data/{c}/patient_ids.txt" for c in CONDITIONS},
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 step0_prepare_blinded_data.py
+        """
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Per-Patient Prediction (parameterized by condition)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_patient_ids_for_condition(wildcards):
+    checkpoints.prepare_blinded_data.get()
+    patient_list = f"data/{wildcards.cond}/patient_ids.txt"
+    with open(patient_list) as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def get_all_predictions_for_condition(wildcards):
+    pids = get_patient_ids_for_condition(wildcards)
+    return expand("results/{{cond}}/predictions/{pid}.json", pid=pids)
+
+
+rule predict_patient:
+    """Dispatch an agent to predict a single patient's outcome."""
+    input:
+        patient_dir="data/{cond}/patients/{pid}",
+    output:
+        json="results/{cond}/predictions/{pid}.json",
+        raw="results/{cond}/predictions/{pid}_raw.txt",
+    resources:
+        mem_mb=80000,
+        runtime=90,
+        slurm="cpus-per-task=8 partition=il account=infolab",
+    shell:
+        """
+        export PATH=$HOME/.local/bin:$PATH
+        cd {workflow.basedir}
+        python3 run_agent.py patient \
+            --patient-dir {input.patient_dir} \
+            --output {output.json} \
+            --raw-output {output.raw}
+        """
+
+
+rule aggregate_predictions:
+    """Aggregate all predictions for a condition into one CSV."""
+    input:
+        jsons=get_all_predictions_for_condition,
+    output:
+        csv="results/{cond}/all_predictions.csv",
+    run:
+        import json
+        import csv
+        rows = []
+        for f in input.jsons:
+            with open(f) as fh:
+                rows.append(json.load(fh))
+        if rows:
+            keys = list(rows[0].keys())
+            with open(output.csv, "w", newline="") as fh:
+                writer = csv.DictWriter(fh, fieldnames=keys, extrasaction="ignore")
+                writer.writeheader()
+                for r in rows:
+                    flat = {}
+                    for k, v in r.items():
+                        flat[k] = json.dumps(v) if isinstance(v, (dict, list)) else v
+                    writer.writerow(flat)
+        print(f"Aggregated {len(rows)} predictions for {wildcards.cond}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Evaluation
+# ══════════════════════════════════════════════════════════════════════════════
+
+rule evaluate:
+    """Evaluate predictions against ground truth for a condition."""
+    input:
+        predictions="results/{cond}/all_predictions.csv",
+        ground_truth="data/ground_truth.json",
+    output:
+        json="results/{cond}/evaluation_results.json",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 evaluate_predictions.py --condition {wildcards.cond}
+        """

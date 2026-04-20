@@ -1,0 +1,178 @@
+"""
+LBCL-Bench with Spatial: Agent-based benchmark with CosMx TME data.
+
+Extends the baseline LBCL-Bench Step 3 to incorporate spatial features
+alongside infusion product features for cross-modal mechanistic reasoning.
+
+Usage (from a SLURM compute node):
+    conda run -n cellwhisperer snakemake --profile sm7_slurm -j 10 all
+"""
+
+BENCH_CSV = "data/lbcl_bench_filtered.csv"
+
+rule all:
+    input:
+        "results/step3_evaluation/bench_mechanism_patient_counts.csv",
+        "results/step3_evaluation/concordance_scores.csv",
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 0: QC & Patient Matching
+# ══════════════════════════════════════════════════════════════════════════════
+
+rule qc_h5ad:
+    """Inspect h5ad files on Sherlock and produce QC report."""
+    input:
+        script="step0_qc_patient_matching.py",
+    output:
+        report="results/qc/patient_matching_report.json",
+    resources:
+        mem_mb=32000,
+        runtime=30,
+        slurm="cpus-per-task=4 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        source /home/groups/zinaida/moritzs/miniforge3/etc/profile.d/conda.sh && conda activate cellwhisperer && python step0_qc_patient_matching.py --phase h5ad
+        """
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 3a: Data Preparation
+# ══════════════════════════════════════════════════════════════════════════════
+
+rule prepare_spatial:
+    """Compute cell type proportions and proximities from CosMx."""
+    input:
+        script="step3a_prepare_spatial_features.py",
+        qc="results/qc/patient_matching_report.json",
+    output:
+        patient_list="data/spatial_features/spatial_patient_ids.txt",
+    resources:
+        mem_mb=64000,
+        runtime=60,
+        slurm="cpus-per-task=8 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        source /home/groups/zinaida/moritzs/miniforge3/etc/profile.d/conda.sh && conda activate cellwhisperer && python step3a_prepare_spatial_features.py
+        """
+
+checkpoint prepare_infusion:
+    """Score cells with CellWhisperer and create per-patient infusion feature dirs."""
+    input:
+        script="step3a_prepare_infusion_features.py",
+    output:
+        patient_list="data/infusion_features/infusion_patient_ids.txt",
+    resources:
+        mem_mb=64000,
+        runtime=60,
+        slurm="cpus-per-task=8 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        source /home/groups/zinaida/moritzs/miniforge3/etc/profile.d/conda.sh && conda activate cellwhisperer && python step3a_prepare_infusion_features.py
+        """
+
+rule merge_patient_data:
+    """Merge spatial and infusion features into unified per-patient directories."""
+    input:
+        spatial="data/spatial_features/spatial_patient_ids.txt",
+        infusion="data/infusion_features/infusion_patient_ids.txt",
+        script="step3a_merge_patient_data.py",
+    output:
+        patient_list="data/patients/patient_ids.txt",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 step3a_merge_patient_data.py
+        """
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 3b: Per-Patient Agent Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+def get_patient_outputs(wildcards):
+    """After merge_patient_data completes, read patient_ids.txt to get the list."""
+    # Use checkpoint to trigger re-evaluation
+    checkpoints.prepare_infusion.get(**wildcards)
+    patient_list = "data/patients/patient_ids.txt"
+    with open(patient_list) as f:
+        patient_ids = [line.strip() for line in f if line.strip()]
+    return expand("results/step3_per_patient/{pid}.json", pid=patient_ids)
+
+rule analyze_patient:
+    """Dispatch an agent to analyze a single patient (multi-modal)."""
+    input:
+        patient_dir="data/patients/{pid}",
+    output:
+        json="results/step3_per_patient/{pid}.json",
+        raw="results/step3_per_patient/{pid}_raw.txt",
+    resources:
+        mem_mb=80000,
+        runtime=90,
+        slurm="cpus-per-task=8 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 run_agent.py patient \
+            --patient-dir {input.patient_dir} \
+            --output {output.json} \
+            --raw-output {output.raw}
+        """
+
+rule aggregate_step3:
+    """Aggregate all per-patient results."""
+    input:
+        jsons=get_patient_outputs,
+    output:
+        csv="results/step3_per_patient/all_patients.csv",
+    run:
+        import json
+        import pandas as pd
+        rows = []
+        for f in input.jsons:
+            with open(f) as fh:
+                rows.append(json.load(fh))
+        pd.DataFrame(rows).to_csv(output.csv, index=False)
+        print(f"Aggregated {len(rows)} patient results")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 3c: Evaluation
+# ══════════════════════════════════════════════════════════════════════════════
+
+rule evaluate_step3:
+    """Evaluate per-patient mechanism recovery against LBCL-Bench."""
+    input:
+        patients="results/step3_per_patient/all_patients.csv",
+        bench=BENCH_CSV,
+    output:
+        csv="results/step3_evaluation/bench_mechanism_patient_counts.csv",
+    resources:
+        mem_mb=8000,
+        runtime=120,
+        slurm="cpus-per-task=4 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 step3c_evaluate.py
+        """
+
+rule concordance_step3:
+    """Compute direction-aware concordance scores with per-modality breakdown."""
+    input:
+        eval_csv="results/step3_evaluation/bench_mechanism_patient_counts.csv",
+        bench=BENCH_CSV,
+    output:
+        csv="results/step3_evaluation/concordance_scores.csv",
+    resources:
+        mem_mb=4000,
+        runtime=15,
+        slurm="cpus-per-task=2 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 step3c_concordance.py
+        """

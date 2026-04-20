@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+system_prompt_combined.md
+
+# Patient data (derived, kept locally but not tracked)
+**/data/patients/
+**/data/infusion_features/
+**/data/spatial_features/
+**/data/cells_*/
+**/data/clinical_*/
+**/data/ground_truth.json
+# Keep benchmark definition
+!**/data/lbcl_bench*.csv
+
+# Agent outputs (reproducible, regenerated per experiment run)
+**/results/
+*_raw.txt
+_match_cache/
+
+# Large artifacts
+pl
+*.pl
+
+# SLURM logs
+*.out
+*.err
