@@ -31,7 +31,7 @@ shift || true
 cd /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_with_spatial
 
 # Run experiment (agents + evaluation)
-python -c "
+python3 -c "
 import sys
 sys.path.insert(0, '../../src')
 from patientwhisperer.run_experiment import main

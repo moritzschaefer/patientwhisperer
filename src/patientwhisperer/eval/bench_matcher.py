@@ -171,7 +171,7 @@ class BenchMatcher:
         if self.llm_cmd[0] == "claude":
             cmd = self.llm_cmd + [
                 "-p", prompt,
-                "--output-format", "stream-json",
+                "--output-format", "text",
                 "--max-turns", "1",
                 "--allowedTools", "",
                 "--dangerously-skip-permissions",
