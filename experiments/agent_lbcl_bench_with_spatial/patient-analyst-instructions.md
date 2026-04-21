@@ -15,63 +15,67 @@ You are given data for a single patient from the CAR T cell therapy cohort. Your
 - `shared_context.md` (already injected in system prompt)
 - Scripts you write yourself
 
-## Step 0: Check Available Modalities
+## Analysis Protocol
 
-**First**, read `data_sources.json` to know what data is available:
-```json
-{"has_infusion": true/false, "has_spatial": true/false, "n_spatial_cells": N}
-```
+Follow these four phases strictly and in order. Do NOT skip ahead. Each phase has a specific objective; do not mix objectives across phases.
 
-Adapt your analysis based on available modalities.
+### Phase 1: Quantitative Profiling
 
-## Round 1: Profile & Hypothesize
+**Objective:** Observe and report. Do NOT interpret, hypothesize, or explain.
 
-1. **Review all available data**: Read clinical variables and ALL available feature files.
+1. Read `data_sources.json` to determine available modalities.
+2. Read `clinical.json` and all available feature files (`infusion_features.csv`, `spatial_features.csv`).
+3. For each data source, produce a structured profile:
+   - **Infusion product** (if available): List all features with extreme quantiles (<0.10 or >0.90). For each, report the feature name, score_mean, quantile_mean, and z-score relative to cohort statistics in the CSV. Also compute and report ratios between opposing cell states (e.g., Proliferating/Quiescent, Cytotoxic/Anergic, Effector/Exhausted, CD8/CD4) using score_mean values.
+   - **Spatial TME** (if available): List all cell type proportions and proximity scores with extreme quantiles (<0.10 or >0.90). Report the value, quantile, and which cell types are unusually enriched, depleted, or co-localized.
+   - **Clinical**: Report age, gender, therapy, LDH, tumor burden, CRS/ICANS grades. Flag any unusual values.
+4. Output: A structured table of observations. No narrative. No causal claims. No "this suggests" or "this indicates."
 
-2. **Contextualize within cohort**: Features include quantile rankings relative to the cohort. Identify unusual features (quantiles < 0.1 or > 0.9).
+### Phase 2: Hypothesis Generation
 
-3. **Generate initial hypotheses** based on the patient's profile:
-   - **If infusion data available**: Which cell populations are over/under-represented? What functional states dominate?
-   - **If spatial data available**: Which cell types are enriched/depleted in the TME? Are there unusual proximity patterns suggesting cell-cell interactions?
-   - Are there unusual clinical features?
+**Objective:** Propose candidate mechanisms grounded in Phase 1 observations and published CAR T biology.
 
-## Round 2: Infusion Product Deep Dive (if infusion data available)
+1. Review your Phase 1 profile. For each extreme observation (or combination of observations), propose a mechanistic hypothesis. Each hypothesis must:
+   - State a specific biological mechanism (e.g., "T cell exhaustion driven by chronic antigen stimulation")
+   - Cite the Phase 1 observation(s) that motivate it (feature names, values, quantiles)
+   - State the expected direction: does this mechanism favor response (pro-response) or resistance (pro-resistance)?
 
-4. **Analyze the pre-computed CellWhisperer scores** in `infusion_features.csv` to test your hypotheses. Each row is a cell-type/state query already scored across this patient's infusion product cells.
+2. Generate 5-10 candidate hypotheses. Prioritize hypotheses supported by multiple concordant observations over those resting on a single feature.
 
-   Focus on:
-   - Features with extreme quantiles (<0.1 or >0.9) indicating unusual enrichment/depletion
-   - Ratios and contrasts between opposing cell states (e.g., effector vs. exhausted)
-   - Consistency across aggregation levels (mean vs. max vs. p85)
-   - Computing z-scores relative to cohort statistics provided in the CSV
+3. Do NOT filter or reject hypotheses yet. That is Phase 3's job.
 
-## Round 3: Spatial Hypothesis Testing (if spatial data available)
+### Phase 3: Falsification
 
-5. **Analyze TME composition**:
-   - Which cell types are enriched or depleted compared to the cohort?
-   - Which proximity scores are extreme — suggesting unusual spatial relationships?
-   - Are there known immunosuppressive patterns (e.g., high Treg + high proximity to CD8 T cells)?
-   - Are there patterns of immune exclusion vs. infiltration?
+**Objective:** Test each hypothesis against the data. Actively search for counter-evidence.
 
-## Round 4: Cross-Modal Integration (if both modalities available)
+For EACH hypothesis from Phase 2, do the following:
 
-6. **Link infusion product quality to TME context**:
-   - Does the TME explain why a good/poor infusion product translated (or didn't) to response?
-   - Are there concordant signals across modalities?
-   - Are there discordant signals that suggest one modality dominates the outcome?
+1. **State a testable prediction.** What additional data pattern would you expect to see if this mechanism is real? What pattern would contradict it?
 
-## Round 5: Quantitative Validation
+2. **Search for counter-evidence.** Examine the patient's data for observations that CONTRADICT the hypothesis:
+   - If the hypothesis claims exhaustion drives failure: are there features showing high effector function, high cytotoxicity, or low inhibitory receptor expression?
+   - If the hypothesis claims TME suppression: are there spatial features showing immune infiltration, low Treg proximity, or low myeloid content?
+   - If the hypothesis invokes a ratio (e.g., CD8/CD4): check whether both numerator and denominator are individually extreme, or just one.
 
-7. **Quantify your claims with statistics.** For each mechanism:
-   - Compute where this patient sits relative to the cohort (z-score or percentile)
-   - Compare to OR and NR group means
-   - **High confidence**: <10th or >90th percentile AND z > ±1.5
-   - **Medium confidence**: >75th or <25th percentile
-   - Below that, the finding is not meaningful
+3. **Check quantitative thresholds.** A mechanism is only credible if the supporting features are genuinely extreme:
+   - **High confidence**: quantile <0.10 or >0.90 AND |z-score| > 1.5
+   - **Medium confidence**: quantile <0.25 or >0.75
+   - Below that: insufficient evidence.
 
-## Round 6: Synthesis
+4. **Verdict.** For each hypothesis, assign one of:
+   - **Survived**: Prediction confirmed, no counter-evidence found, supporting features meet quantitative thresholds.
+   - **Weakened**: Some supporting evidence but counter-evidence exists or thresholds not met. State specifically what weakens it.
+   - **Rejected**: Counter-evidence outweighs supporting evidence, or key features are not extreme. State the falsifying observation.
 
-8. **Synthesize findings** into a coherent mechanistic narrative. Ground reasoning in published CAR T cell biology.
+### Phase 4: Synthesis
+
+**Objective:** Report only surviving and weakened mechanisms. Construct a coherent mechanistic narrative.
+
+1. Drop all rejected hypotheses. Do not mention them in the output.
+2. For surviving and weakened mechanisms, integrate across modalities:
+   - **If both modalities available**: Does the infusion product quality align with or contradict the TME context? Mechanisms supported by both modalities are stronger.
+   - Tag each mechanism with `data_source`: "infusion", "spatial", or "both".
+3. Write a 2-3 paragraph narrative grounded in the surviving mechanisms. Each claim must reference specific features and quantiles.
 
 ## Output Requirements
 
@@ -84,15 +88,29 @@ Your FINAL message must contain a JSON block (fenced with ```json) with:
   "patient_id": "PAT01",
   "response": "OR",
   "clinical_summary": "Brief clinical profile",
+  "phase1_profile": {
+    "n_extreme_infusion": 5,
+    "n_extreme_spatial": 3,
+    "n_extreme_clinical": 1,
+    "key_ratios": {"Proliferating_Quiescent": 2.1, "CD8_CD4": 0.8}
+  },
   "mechanisms_identified": [
     {
       "mechanism": "Short description",
       "data_source": "infusion|spatial|both",
-      "evidence": "What data supports this — include specific scores, z-scores, and percentiles",
-      "confidence": "high|medium|low",
+      "evidence": "Phase 1 observations supporting this — include specific scores, z-scores, and percentiles",
+      "counter_evidence": "What counter-evidence was searched for and not found (or found but insufficient)",
+      "falsification_verdict": "survived|weakened",
+      "confidence": "high|medium",
       "direction": "pro-response|pro-resistance|neutral",
       "effect_size": "z-score or Cohen's d relative to cohort",
       "patient_percentile": "quantile rank in cohort"
+    }
+  ],
+  "rejected_hypotheses": [
+    {
+      "hypothesis": "What was proposed",
+      "falsifying_observation": "What contradicted it"
     }
   ],
   "toxicity_analysis": {
@@ -103,7 +121,7 @@ Your FINAL message must contain a JSON block (fenced with ```json) with:
   },
   "narrative": "Integrated mechanistic explanation (2-3 paragraphs)",
   "unusual_features": ["feature1 at 95th percentile (z=2.1)", "feature2 at 5th percentile (z=-1.8)"],
-  "analysis_rounds": 6,
+  "analysis_phases": 4,
   "suggested_follow_up": ["Additional analyses that could strengthen these conclusions"]
 }
 ```
@@ -118,3 +136,4 @@ Your FINAL message must contain a JSON block (fenced with ```json) with:
 - **Tag every mechanism with `data_source`**: "infusion", "spatial", or "both".
 - **Do NOT report "high confidence" mechanisms unless quantile < 0.1 or > 0.9 AND |z-score| > 1.5.**
 - Ground your reasoning in published CAR T cell biology.
+- **Phase discipline is critical.** If you catch yourself interpreting during Phase 1 or skipping falsification in Phase 3, stop and redo the phase correctly.
