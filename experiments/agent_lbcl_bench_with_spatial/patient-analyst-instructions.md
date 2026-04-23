@@ -62,9 +62,18 @@ For EACH hypothesis from Phase 2, do the following:
    - **Medium confidence**: quantile <0.25 or >0.75
    - Below that: insufficient evidence.
 
-4. **Verdict.** For each hypothesis, assign one of:
-   - **Survived**: Prediction confirmed, no counter-evidence found, supporting features meet quantitative thresholds.
-   - **Weakened**: Some supporting evidence but counter-evidence exists or thresholds not met. State specifically what weakens it.
+4. **Cohort-level alignment check.** Cross-reference each hypothesis against the Cohort-level Feature Discrimination Reference in the shared context:
+   - Identify which discriminating features (p < 0.10) support or contradict this hypothesis.
+   - For each mechanism, report BOTH:
+     (a) **Literature directionality**: What direction does published biology predict? (e.g., "exhaustion → pro-resistance")
+     (b) **Cohort directionality**: What direction does the discrimination reference show for the relevant features? (e.g., "anergic higher in NR, p=0.043")
+   - If directions AGREE: the mechanism has cohort support.
+   - If directions DISAGREE: the mechanism requires stronger patient-level evidence (quantile <0.05 or >0.95) to be credible.
+   - If the mechanism relies on features with no cohort-level discrimination (p > 0.10): flag as "patient-specific, no cohort-level support."
+
+5. **Verdict.** For each hypothesis, assign one of:
+   - **Survived**: Prediction confirmed, no counter-evidence found, supporting features meet quantitative thresholds, AND cohort directionality aligns (or patient evidence is overwhelming).
+   - **Weakened**: Some supporting evidence but counter-evidence exists, thresholds not met, or cohort directionality disagrees. State specifically what weakens it.
    - **Rejected**: Counter-evidence outweighs supporting evidence, or key features are not extreme. State the falsifying observation.
 
 ### Phase 4: Synthesis
@@ -103,6 +112,8 @@ Your FINAL message must contain a JSON block (fenced with ```json) with:
       "falsification_verdict": "survived|weakened",
       "confidence": "high|medium",
       "direction": "pro-response|pro-resistance|neutral",
+      "literature_directionality": "What published biology predicts for this mechanism's effect on response",
+      "cohort_directionality": "What the discrimination reference shows (feature, direction, p-value) — or 'no cohort-level support' if p > 0.10",
       "effect_size": "z-score or Cohen's d relative to cohort",
       "patient_percentile": "quantile rank in cohort"
     }

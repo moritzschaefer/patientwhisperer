@@ -64,6 +64,70 @@ Each patient's `infusion_features.csv` contains CellWhisperer scores already com
      The checkpoint is at: /oak/stanford/groups/zinaida/moritzs/cellwhisperer/results/911-cosmx6k-eval/best_models/best_cxg.ckpt
      See git history of this file for the full scoring code and query guidelines. -->
 
+## Cohort-level Feature Discrimination Reference
+
+The following statistics summarize how features differ between overall responders (OR, n=43) and non-responders (NR, n=36) across the full cohort. Use these to ground your per-patient observations: a feature that is extreme in this patient AND discriminates at the cohort level is stronger evidence for an outcome-related mechanism than one that is merely extreme for this patient.
+
+**How to use:**
+- When a feature is extreme for a patient, check whether it discriminates OR vs NR at the cohort level.
+- Prioritize mechanisms built on features where the patient's deviation ALIGNS with the cohort-level direction.
+- Features that do NOT discriminate cohort-wide (p > 0.10) may still reflect patient-specific biology but are weaker evidence for outcome-linked mechanisms.
+
+### Clinical Variables
+
+| Variable | OR mean | NR mean | Direction | p-value |
+|---|---|---|---|---|
+| age | 55.6 | 63.7 | NR > OR | 0.006 |
+| LDH | 261.4 | 368.9 | NR > OR | 0.463 |
+| tumor_burden_SPD | 17.9 | 23.9 | NR > OR | 0.283 |
+
+### Ratio Features (p < 0.10)
+
+Ratios capture biologically meaningful cell-state balances and are the strongest discriminators.
+
+| Ratio | Agg | OR mean | NR mean | Direction | p-value | d |
+|---|---|---|---|---|---|---|
+| polyfunctional_vs_anergic | median | 1.677 | 1.555 | OR > NR | 0.024 | -0.296 |
+| polyfunctional_vs_anergic | mean | 1.652 | 1.541 | OR > NR | 0.028 | -0.289 |
+| cd8_vs_cd4 | median | 1.068 | 0.913 | OR > NR | 0.031 | -0.284 |
+| cd8_vs_cd4 | mean | 1.063 | 0.937 | OR > NR | 0.039 | -0.271 |
+| activated_vs_resting | mean | 0.830 | 0.855 | NR > OR | 0.040 | 0.270 |
+| treg_vs_cd8 | mean | 1.181 | 1.370 | NR > OR | 0.048 | 0.260 |
+| treg_vs_cd8 | median | 1.225 | 1.466 | NR > OR | 0.048 | 0.260 |
+| cytotoxic_vs_dysfunctional | mean | 0.848 | 0.817 | OR > NR | 0.058 | -0.249 |
+| cd8_vs_cd4 | p85 | 1.110 | 1.012 | OR > NR | 0.061 | -0.247 |
+| cytotoxic_vs_dysfunctional | median | 0.837 | 0.802 | OR > NR | 0.062 | -0.245 |
+| activated_vs_resting | median | 0.829 | 0.850 | NR > OR | 0.074 | 0.235 |
+| polyfunctional_vs_anergic | p85 | 1.448 | 1.378 | OR > NR | 0.081 | -0.230 |
+| mito_vs_hypoxia | mean | 1.123 | 1.096 | OR > NR | 0.091 | -0.222 |
+| activated_vs_resting | p85 | 0.865 | 0.883 | NR > OR | 0.091 | 0.222 |
+
+**Key biological signals:**
+- **CD8/CD4 ratio**: Responders have higher CD8 relative to CD4. Low CD8/CD4 tracks with non-response.
+- **Polyfunctional/Anergic**: Responders have more polyfunctional vs anergic cells. Low ratio signals T cell dysfunction.
+- **Treg/CD8**: Non-responders have higher Treg relative to CD8. High ratio suggests regulatory suppression of cytotoxic cells.
+- **Activated/Resting**: Non-responders show higher activated/resting ratio, possibly reflecting activation without effective cytotoxicity (activation-exhaustion coupling).
+- **Cytotoxic/Dysfunctional**: Responders have higher cytotoxic vs dysfunctional ratio. Low ratio indicates impaired killing capacity.
+- **Mitochondrial/Hypoxia**: Responders show higher mitochondrial activity relative to hypoxia response, suggesting better metabolic fitness.
+
+### Individual CellWhisperer Features (top discriminators, p < 0.05)
+
+| Feature | Agg | OR mean | NR mean | Direction | p-value |
+|---|---|---|---|---|---|
+| th2 | median | 5.373 | 5.759 | NR > OR | 0.017 |
+| tumor_cells | p85 | 3.779 | 4.153 | NR > OR | 0.024 |
+| th1 | median | 4.619 | 4.981 | NR > OR | 0.026 |
+| myc_high | median | 7.005 | 6.735 | OR > NR | 0.029 |
+| myc_high | mean | 6.870 | 6.616 | OR > NR | 0.030 |
+| multi_checkpoint | p85 | 7.785 | 7.908 | NR > OR | 0.035 |
+| cd4_helper | median | 4.981 | 5.286 | NR > OR | 0.036 |
+| th17 | median | 6.293 | 6.597 | NR > OR | 0.037 |
+| proliferating | p85 | 9.120 | 8.902 | OR > NR | 0.039 |
+| high_viability | median | 5.370 | 5.161 | OR > NR | 0.042 |
+| anergic | median | 4.980 | 5.299 | NR > OR | 0.043 |
+| lymphoma_cells | median | 1.032 | 1.240 | NR > OR | 0.046 |
+| nkt | median | 3.153 | 2.727 | OR > NR | 0.047 |
+
 ## Cross-Modal Reasoning
 
 When a patient has BOTH infusion product and spatial TME data:
