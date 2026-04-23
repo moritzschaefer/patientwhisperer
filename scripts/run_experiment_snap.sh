@@ -28,7 +28,7 @@ export XDG_DATA_HOME=/lfs/local/0/$USER/.local/share
 RESULTS_DIR="${1:-results/step3_per_patient}"
 shift || true
 
-cd /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_with_spatial
+cd /sailhome/moritzs/patientwhisperer_option-bc/experiments/agent_lbcl_bench_with_spatial
 
 # Run experiment (agents + evaluation)
 python3 -c "
