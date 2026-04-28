@@ -42,11 +42,13 @@ Follow these four phases strictly and in order. Do NOT skip ahead. Each phase ha
 
 2. Generate 5-10 candidate hypotheses. Prioritize hypotheses supported by multiple concordant observations over those resting on a single feature.
 
-3. Do NOT filter or reject hypotheses yet. That is Phase 3's job.
+3. **Go beyond pre-computed features.** The pre-computed `infusion_features.csv` covers ~37 cell-state queries. If your hypothesis involves a cell state or phenotype not covered (e.g., a specific transcription factor program, a metabolic state, a rare subset), note it as requiring live CellWhisperer scoring in Phase 3.
+
+4. Do NOT filter or reject hypotheses yet. That is Phase 3's job.
 
 ### Phase 3: Falsification
 
-**Objective:** Test each hypothesis against the data. Actively search for counter-evidence.
+**Objective:** Test each hypothesis against the data. Actively search for counter-evidence. Use live CellWhisperer scoring to probe signals not covered by pre-computed features.
 
 For EACH hypothesis from Phase 2, do the following:
 
@@ -57,12 +59,19 @@ For EACH hypothesis from Phase 2, do the following:
    - If the hypothesis claims TME suppression: are there spatial features showing immune infiltration, low Treg proximity, or low myeloid content?
    - If the hypothesis invokes a ratio (e.g., CD8/CD4): check whether both numerator and denominator are individually extreme, or just one.
 
-3. **Check quantitative thresholds.** A mechanism is only credible if the supporting features are genuinely extreme:
+3. **Run novel CellWhisperer queries when needed.** If a hypothesis involves an infusion product signal not covered by the pre-computed features in `infusion_features.csv`, use live CellWhisperer scoring to test it. See `shared_context.md` for the full scoring code and query guidelines. Follow this workflow:
+   - Write a Python script that loads the full cohort h5ad (all 79 patients), scores ALL cells against your query, and aggregates per patient (mean, max, p85).
+   - Compute this patient's **quantile rank** relative to the full cohort distribution.
+   - Compare OR vs NR distributions (Mann-Whitney U test).
+   - **You MUST score the entire cohort, not just this patient.** A score is meaningless without cohort context.
+   - Combine multiple related queries in a single script to amortize the ~2 min model loading cost.
+
+4. **Check quantitative thresholds.** A mechanism is only credible if the supporting features are genuinely extreme:
    - **High confidence**: quantile <0.10 or >0.90 AND |z-score| > 1.5
    - **Medium confidence**: quantile <0.25 or >0.75
    - Below that: insufficient evidence.
 
-4. **Verdict.** For each hypothesis, assign one of:
+5. **Verdict.** For each hypothesis, assign one of:
    - **Survived**: Prediction confirmed, no counter-evidence found, supporting features meet quantitative thresholds.
    - **Weakened**: Some supporting evidence but counter-evidence exists or thresholds not met. State specifically what weakens it.
    - **Rejected**: Counter-evidence outweighs supporting evidence, or key features are not extreme. State the falsifying observation.
@@ -79,7 +88,8 @@ For EACH hypothesis from Phase 2, do the following:
 
 ## Output Requirements
 
-Save analysis scripts to the patient's results directory.
+Save analysis scripts to the patient's data directory.
+**Save your final JSON output to `final_results.json` in the patient's data directory.** This file is used by the evaluation pipeline — always use this exact filename.
 
 Your FINAL message must contain a JSON block (fenced with ```json) with:
 
@@ -122,15 +132,16 @@ Your FINAL message must contain a JSON block (fenced with ```json) with:
   "narrative": "Integrated mechanistic explanation (2-3 paragraphs)",
   "unusual_features": ["feature1 at 95th percentile (z=2.1)", "feature2 at 5th percentile (z=-1.8)"],
   "analysis_phases": 4,
+  "live_cellwhisperer_queries": ["Novel queries scored via live CellWhisperer (if any)"],
   "suggested_follow_up": ["Additional analyses that could strengthen these conclusions"]
 }
 ```
 
 ## Important Guidelines
 
-- You may write and execute small Python scripts (stdlib only) to compute z-scores, parse CSVs, etc. Run with `python3 <script.py>`.
+- You may write and execute Python scripts. Run with: `cd /sailhome/moritzs/cellwhisperer_public && pixi run python /path/to/script.py`
 - Use `flush=True` on all print statements.
-- **Do NOT attempt to import cellwhisperer, anndata, or other scientific packages.** Use only the pre-computed CSV/JSON files.
+- You have access to cellwhisperer, anndata, scanpy, pandas, numpy, scipy, torch. Use the pre-computed CSV/JSON files for quick analysis, and live CellWhisperer scoring (see shared_context.md) for novel queries beyond the pre-computed feature set.
 - Focus on what makes THIS patient unique compared to the cohort.
 - **CellWhisperer is for infusion product ONLY** — spatial features are pre-computed as proportions and proximities. Do NOT try to score spatial data with CellWhisperer.
 - **Tag every mechanism with `data_source`**: "infusion", "spatial", or "both".

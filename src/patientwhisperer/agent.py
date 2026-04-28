@@ -379,7 +379,13 @@ def process_agent_output(
             "data_sources_available": pdata["data_sources"],
         }
 
-    parsed = extract_json(stdout, framework)
+    results_file = os.path.join(pdata["patient_dir"], "final_results.json")
+    try:
+        parsed = json.load(open(results_file))
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"WARNING: Could not read {results_file}: {e}, falling back to stdout extraction", file=sys.stderr, flush=True)
+        parsed = extract_json(stdout, framework)
+
     if parsed:
         parsed.setdefault("patient_id", pid)
         parsed.setdefault("response", response)
