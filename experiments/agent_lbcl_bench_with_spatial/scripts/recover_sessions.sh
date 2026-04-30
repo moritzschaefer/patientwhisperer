@@ -47,4 +47,4 @@ while IFS=' ' read -r SESSION_ID PID; do
     else
         echo "  FAILED: no file written"
     fi
-done < /tmp/parse_error_sessions.txt
+done < /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_with_spatial/scripts/parse_error_sessions.txt
