@@ -204,10 +204,11 @@ class BenchMatcher:
                     raise
         return None
 
-    async def _call_llm_async(self, prompt: str, max_retries: int = 4) -> dict | None:
+    async def _call_llm_async(self, prompt: str, max_retries: int = 2) -> dict | None:
         """Call claude CLI for JSON response (async, for concurrent execution).
 
-        Retries with exponential backoff on rate-limit (429) errors.
+        Raises RuntimeError immediately on rate limits (429 or daily cap).
+        Cache is safe; rerun picks up where it left off.
         """
         cmd = self._build_cmd(prompt)
         for attempt in range(max_retries + 1):
@@ -231,14 +232,9 @@ class BenchMatcher:
                 stderr = stderr_bytes.decode()
                 if proc.returncode != 0:
                     err_msg = stderr.strip()[:200] or stdout.strip()[:200]
-                    if "429" in err_msg or "Rate limited" in err_msg or "rate limit" in err_msg.lower():
-                        backoff = 2 ** attempt * 5  # 5, 10, 20, 40, 80s
-                        print(f"  Rate limited, backing off {backoff}s (attempt {attempt + 1})",
-                              file=sys.stderr, flush=True)
-                        await asyncio.sleep(backoff)
-                        continue
-                    if "hit your limit" in err_msg.lower():
-                        raise RuntimeError(f"Daily limit reached: {err_msg}")
+                    if "429" in err_msg or "Rate limited" in err_msg or "rate limit" in err_msg.lower() \
+                            or "hit your limit" in err_msg.lower():
+                        raise RuntimeError(f"Rate limited: {err_msg}")
                     raise RuntimeError(
                         f"claude exited with code {proc.returncode}: {err_msg}"
                     )

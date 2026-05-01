@@ -122,6 +122,18 @@ def main():
     print(f"Bench: {len(bench)} mechanisms"
           + (f" (filtered to modality={args.modality})" if args.modality else ""))
     patient_results = load_patient_results(args.patient_dir)
+
+    # Filter patients by modality if data_sources_available is present
+    if args.modality:
+        modality_key = {"infusion": "has_infusion", "tme": "has_spatial"}[args.modality]
+        before = len(patient_results)
+        patient_results = {
+            pid: d for pid, d in patient_results.items()
+            if d.get("data_sources_available", {}).get(modality_key, True)
+        }
+        if len(patient_results) < before:
+            print(f"Filtered patients: {before} -> {len(patient_results)} (keeping {modality_key}=true)")
+
     or_pids = {pid for pid, d in patient_results.items() if d.get("response") == "OR"}
     nr_pids = {pid for pid, d in patient_results.items() if d.get("response") == "NR"}
     n_or, n_nr = len(or_pids), len(nr_pids)
