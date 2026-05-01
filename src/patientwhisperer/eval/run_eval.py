@@ -69,25 +69,58 @@ def check_big4(per_mechanism: list[dict]) -> list[dict]:
     return results
 
 
+def filter_bench(bench: pd.DataFrame, modality: str | None) -> pd.DataFrame:
+    """Filter bench to valid, detectable mechanisms.
+
+    Always excludes mechanisms with wael_validity == 'Excluded_Confirmed'.
+    If modality is specified, further filters to mechanisms detectable by that modality.
+    """
+    if "wael_validity" in bench.columns:
+        bench = bench[bench["wael_validity"] != "Excluded_Confirmed"]
+
+    if modality is None:
+        return bench
+
+    col_map = {
+        "infusion": "infusion_scrna_detectability",
+        "tme": "tme_spatial_detectability",
+    }
+    col = col_map.get(modality)
+    if col is None:
+        raise ValueError(f"Unknown modality '{modality}', expected one of: {list(col_map)}")
+    if col not in bench.columns:
+        raise ValueError(f"Column '{col}' not found in bench CSV. Available: {list(bench.columns)}")
+
+    bench = bench[bench[col].notna()]
+    return bench
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run PatientWhisperer routine evaluation suite"
     )
-    parser.add_argument("--bench-csv", required=True, help="LBCL-Bench filtered CSV")
+    parser.add_argument("--bench-csv", required=True, help="LBCL-Bench CSV (filtered or unfiltered)")
     parser.add_argument("--patient-dir", required=True, help="Step 3 per-patient results dir")
     parser.add_argument("--output-dir", required=True, help="Output directory")
     parser.add_argument("--cache-dir", default=None, help="Match cache dir (default: output/_match_cache)")
     parser.add_argument("--batch-size", type=int, default=15)
     parser.add_argument("--skip-matching", action="store_true",
                         help="Skip LLM matching, use existing bench_mechanism_patient_counts.csv")
+    parser.add_argument("--modality", default=None, choices=["infusion", "tme"],
+                        help="Filter bench to mechanisms detectable by this modality")
+    parser.add_argument("--concurrency", type=int, default=1,
+                        help="Number of concurrent claude CLI calls per mechanism (default: 1 = sequential)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
     cache_dir = args.cache_dir or os.path.join(args.output_dir, "_match_cache")
     counts_path = os.path.join(args.output_dir, "bench_mechanism_patient_counts.csv")
 
-    # Load data
+    # Load and filter bench
     bench = pd.read_csv(args.bench_csv)
+    bench = filter_bench(bench, args.modality)
+    print(f"Bench: {len(bench)} mechanisms"
+          + (f" (filtered to modality={args.modality})" if args.modality else ""))
     patient_results = load_patient_results(args.patient_dir)
     or_pids = {pid for pid, d in patient_results.items() if d.get("response") == "OR"}
     nr_pids = {pid for pid, d in patient_results.items() if d.get("response") == "NR"}
@@ -111,7 +144,12 @@ def main():
             mid = mech["mechanism_id"]
             print(f"  [{idx + 1}/{len(bench)}] {mid}: {mech['verbal_summary'][:60]}...", flush=True)
 
-            matches = matcher.match_mechanism(mech.to_dict(), patient_results)
+            if args.concurrency > 1:
+                import asyncio
+                matches = asyncio.run(matcher.match_mechanism_async(
+                    mech.to_dict(), patient_results, concurrency=args.concurrency))
+            else:
+                matches = matcher.match_mechanism(mech.to_dict(), patient_results)
             matched_pids = set(matches.keys())
             matched_or = matched_pids & or_pids
             matched_nr = matched_pids & nr_pids
@@ -155,7 +193,8 @@ def main():
     print("=" * 60)
     print(f"  Recall:                  {result['n_detected']}/{result['n_total']} "
           f"({result['recall']:.0%})")
-    print(f"  Mean signed specificity: {result['mean_signed_specificity']:+.3f} "
+    mss = result['mean_signed_specificity']
+    print(f"  Mean signed specificity: {f'{mss:+.3f}' if mss is not None else 'N/A'} "
           f"({result['n_correct_direction']}/{result['n_direction_assessed']} correct)")
     print()
 

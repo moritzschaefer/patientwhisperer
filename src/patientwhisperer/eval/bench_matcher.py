@@ -16,13 +16,14 @@ Usage as CLI:
         --patient-dir results/step3_per_patient \
         --output-dir results/step3_evaluation
 """
+import asyncio
 import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
-from collections import Counter
+import sys
 
 
 def _hash_bench(verbal_summary: str, direction: str) -> str:
@@ -37,19 +38,16 @@ def _hash_pair(bench_hash: str, agent_mechanism: str) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:20]
 
 
-def _detect_llm_cmd():
-    """Detect available LLM CLI (claude or opencode via apptainer)."""
-    if shutil.which("claude"):
-        return ["claude"]
-    if shutil.which("apptainer"):
-        return ["apptainer", "run", "docker://openeuler/opencode"]
-    if shutil.which("opencode"):
-        return ["opencode"]
-    raise RuntimeError("No LLM CLI found (claude, opencode, or apptainer)")
-
-
 def _extract_json(stdout: str) -> dict | None:
-    """Extract JSON from LLM output (handles NDJSON stream and raw JSON)."""
+    """Extract JSON from LLM output (handles NDJSON stream, markdown blocks, and raw JSON)."""
+    # First try markdown block on raw stdout (before NDJSON processing strips newlines)
+    m = re.search(r"```json\s*\n(.*?)\n\s*```", stdout, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except json.JSONDecodeError:
+            pass
+
     # Try NDJSON (opencode/claude stream-json format)
     full_text = ""
     for line in stdout.split("\n"):
@@ -65,7 +63,7 @@ def _extract_json(stdout: str) -> dict | None:
 
     search_text = full_text if full_text else stdout
 
-    # Try ```json ... ``` block
+    # Try ```json ... ``` block on NDJSON-reassembled text
     m = re.search(r"```json\s*\n(.*?)\n\s*```", search_text, re.DOTALL)
     if m:
         try:
@@ -117,7 +115,8 @@ class BenchMatcher:
         self.cache_dir = cache_dir
         self.batch_size = batch_size
         self.timeout = timeout
-        self.llm_cmd = _detect_llm_cmd()
+        if not shutil.which("claude"):
+            raise RuntimeError("claude CLI not found on PATH")
         os.makedirs(cache_dir, exist_ok=True)
 
     def _cache_path(self, pair_hash: str) -> str:
@@ -166,43 +165,100 @@ class BenchMatcher:
             'If NO findings match: {"matches": {}}'
         )
 
-    def _call_llm(self, prompt: str, max_retries: int = 2) -> dict | None:
-        """Call LLM CLI and extract JSON response."""
-        if self.llm_cmd[0] == "claude":
-            cmd = self.llm_cmd + [
-                "-p", prompt,
-                "--output-format", "text",
-                "--max-turns", "1",
-                "--allowedTools", "",
-                "--dangerously-skip-permissions",
-            ]
-        else:
-            cmd = self.llm_cmd + ["run", "--format", "json", prompt]
+    def _build_cmd(self, prompt: str) -> list[str]:
+        return [
+            "claude",
+            "-p", prompt,
+            "--output-format", "text",
+            "--max-turns", "1",
+            "--allowedTools", "",
+            "--model", "sonnet",
+            "--dangerously-skip-permissions",
+            "--strict-mcp-config",
+        ]
 
+    def _call_llm(self, prompt: str, max_retries: int = 2) -> dict | None:
+        """Call claude CLI for JSON response (synchronous, single call)."""
+        cmd = self._build_cmd(prompt)
         for attempt in range(max_retries + 1):
             try:
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=self.timeout
+                    cmd, capture_output=True, text=True, timeout=self.timeout,
+                    cwd="/tmp",
                 )
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        f"claude exited with code {result.returncode}: "
+                        f"{result.stderr.strip()[:200] or result.stdout.strip()[:200]}"
+                    )
                 parsed = _extract_json(result.stdout)
                 if parsed and "matches" in parsed:
                     return parsed["matches"]
+                print(f"  WARNING: unparseable output (attempt {attempt + 1})",
+                      file=sys.stderr, flush=True)
             except subprocess.TimeoutExpired:
-                pass
+                print(f"  WARNING: LLM timed out (attempt {attempt + 1})", file=sys.stderr, flush=True)
             except Exception as e:
-                print(f"  LLM error (attempt {attempt + 1}): {e}")
+                print(f"  LLM error (attempt {attempt + 1}): {e}", file=sys.stderr, flush=True)
+                if attempt == max_retries:
+                    raise
         return None
 
-    def match_mechanism(
-        self,
-        bench_mech: dict,
-        patient_results: dict[str, dict],
-    ) -> dict[str, dict]:
-        """Match one benchmark mechanism against all patients.
+    async def _call_llm_async(self, prompt: str, max_retries: int = 4) -> dict | None:
+        """Call claude CLI for JSON response (async, for concurrent execution).
 
-        Returns dict of {patient_id: {"finding": ..., "data_source": ...}}.
-        Uses per-pair cache: only uncached (bench, agent_mechanism) pairs are sent to LLM.
+        Retries with exponential backoff on rate-limit (429) errors.
         """
+        cmd = self._build_cmd(prompt)
+        for attempt in range(max_retries + 1):
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    cwd="/tmp",
+                )
+                try:
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        proc.communicate(), timeout=self.timeout
+                    )
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                    print(f"  WARNING: LLM timed out (attempt {attempt + 1})",
+                          file=sys.stderr, flush=True)
+                    continue
+
+                stdout = stdout_bytes.decode()
+                stderr = stderr_bytes.decode()
+                if proc.returncode != 0:
+                    err_msg = stderr.strip()[:200] or stdout.strip()[:200]
+                    if "429" in err_msg or "Rate limited" in err_msg or "rate limit" in err_msg.lower():
+                        backoff = 2 ** attempt * 5  # 5, 10, 20, 40, 80s
+                        print(f"  Rate limited, backing off {backoff}s (attempt {attempt + 1})",
+                              file=sys.stderr, flush=True)
+                        await asyncio.sleep(backoff)
+                        continue
+                    if "hit your limit" in err_msg.lower():
+                        raise RuntimeError(f"Daily limit reached: {err_msg}")
+                    raise RuntimeError(
+                        f"claude exited with code {proc.returncode}: {err_msg}"
+                    )
+                parsed = _extract_json(stdout)
+                if parsed and "matches" in parsed:
+                    return parsed["matches"]
+                print(f"  WARNING: unparseable output (attempt {attempt + 1})",
+                      file=sys.stderr, flush=True)
+            except asyncio.TimeoutError:
+                pass
+            except RuntimeError:
+                raise
+            except Exception as e:
+                print(f"  LLM error (attempt {attempt + 1}): {e}", file=sys.stderr, flush=True)
+                if attempt == max_retries:
+                    raise
+        return None
+
+    def _collect_uncached(self, bench_mech: dict, patient_results: dict[str, dict]):
+        """Separate cached from uncached (bench, agent_mechanism) pairs."""
         bench_hash = _hash_bench(
             bench_mech["verbal_summary"],
             bench_mech.get("_direction", _infer_direction(bench_mech["verbal_summary"])),
@@ -212,9 +268,8 @@ class BenchMatcher:
         )
 
         all_matches = {}
-        uncached_items = []  # (pid, mech_text, direction, data_source, pair_hash)
+        uncached_items = []
 
-        # Check cache for every (bench, agent_mechanism) pair
         for pid, presult in patient_results.items():
             for m in presult.get("mechanisms_identified", []):
                 mech_text = m.get("mechanism", "")
@@ -232,37 +287,98 @@ class BenchMatcher:
                         pair_hash,
                     ))
 
+        return all_matches, uncached_items
+
+    def _process_batch_result(self, batch, matches, all_matches):
+        """Cache batch results and update all_matches."""
+        if matches is None:
+            return
+        matched_pids = set(matches.keys())
+        for pid, mech_text, _, _, pair_hash in batch:
+            if pid in matched_pids:
+                match_info = matches[pid]
+                if isinstance(match_info, str):
+                    match_info = {"finding": match_info, "data_source": "unknown"}
+                self._save_cached(pair_hash, {"is_match": True, "match_info": match_info})
+                all_matches[pid] = match_info
+            else:
+                self._save_cached(pair_hash, {"is_match": False})
+
+    def match_mechanism(
+        self,
+        bench_mech: dict,
+        patient_results: dict[str, dict],
+    ) -> dict[str, dict]:
+        """Match one benchmark mechanism against all patients (sequential)."""
+        all_matches, uncached_items = self._collect_uncached(bench_mech, patient_results)
         if not uncached_items:
             return all_matches
 
-        # Batch uncached items and send to LLM
         for i in range(0, len(uncached_items), self.batch_size):
             batch = uncached_items[i:i + self.batch_size]
             patient_mechs = [(pid, text, d, src) for pid, text, d, src, _ in batch]
-
             prompt = self._build_prompt(bench_mech, patient_mechs)
             matches = self._call_llm(prompt)
-
             if matches is None:
-                continue
+                mid = bench_mech.get("mechanism_id", "?")
+                raise RuntimeError(
+                    f"LLM matching failed for {mid} batch {i // self.batch_size + 1}"
+                )
+            self._process_batch_result(batch, matches, all_matches)
 
-            # Cache results for each item in batch
-            matched_pids = set(matches.keys())
-            for pid, mech_text, _, _, pair_hash in batch:
-                if pid in matched_pids:
-                    match_info = matches[pid]
-                    if isinstance(match_info, str):
-                        match_info = {"finding": match_info, "data_source": "unknown"}
-                    self._save_cached(pair_hash, {"is_match": True, "match_info": match_info})
-                    all_matches[pid] = match_info
-                else:
-                    self._save_cached(pair_hash, {"is_match": False})
+        return all_matches
+
+    async def match_mechanism_async(
+        self,
+        bench_mech: dict,
+        patient_results: dict[str, dict],
+        concurrency: int = 8,
+    ) -> dict[str, dict]:
+        """Match one benchmark mechanism against all patients (concurrent).
+
+        Runs up to `concurrency` claude CLI calls in parallel using asyncio.
+        """
+        all_matches, uncached_items = self._collect_uncached(bench_mech, patient_results)
+        if not uncached_items:
+            return all_matches
+
+        batches = []
+        for i in range(0, len(uncached_items), self.batch_size):
+            batches.append(uncached_items[i:i + self.batch_size])
+
+        sem = asyncio.Semaphore(concurrency)
+
+        async def process_batch(batch):
+            async with sem:
+                patient_mechs = [(pid, text, d, src) for pid, text, d, src, _ in batch]
+                prompt = self._build_prompt(bench_mech, patient_mechs)
+                return batch, await self._call_llm_async(prompt)
+
+        tasks = [process_batch(b) for b in batches]
+        failed = 0
+        for coro in asyncio.as_completed(tasks):
+            batch, matches = await coro
+            if matches is None:
+                failed += len(batch)
+            else:
+                self._process_batch_result(batch, matches, all_matches)
+
+        if failed:
+            mid = bench_mech.get("mechanism_id", "?")
+            raise RuntimeError(
+                f"LLM matching failed for {mid}: {failed} items returned None. "
+                f"Cache is safe but results are incomplete — rerun to retry."
+            )
 
         return all_matches
 
 
 def load_patient_results(patient_dir: str) -> dict[str, dict]:
-    """Load all patient JSON results from a directory."""
+    """Load all patient JSON results from a directory.
+
+    Includes any result file that contains mechanisms_identified,
+    regardless of status field.
+    """
     results = {}
     for fname in sorted(os.listdir(patient_dir)):
         if not fname.endswith(".json"):
@@ -270,7 +386,7 @@ def load_patient_results(patient_dir: str) -> dict[str, dict]:
         pid = fname.replace(".json", "")
         with open(os.path.join(patient_dir, fname)) as f:
             data = json.load(f)
-        if data.get("status") == "success":
+        if data.get("mechanisms_identified"):
             results[pid] = data
     return results
 
