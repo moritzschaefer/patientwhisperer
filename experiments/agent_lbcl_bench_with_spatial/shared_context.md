@@ -46,29 +46,24 @@ You are an AI agent analyzing CAR T cell therapy data for Large B-Cell Lymphoma 
 | `LDH` | Lactate dehydrogenase (U/L) | 147-1563, many NA |
 | `tumor_burden_SPD` | Tumor burden (SPD) | 0-55.8, many NA |
 
-### CellWhisperer Model
+### Analyzing Infusion Product Data
 
-CellWhisperer is a multimodal AI model that scores single cells against natural-language queries. It was used to pre-compute the infusion product features in `infusion_features.csv`.
+You have two complementary approaches for analyzing infusion product scRNA-seq:
 
-**IMPORTANT: CellWhisperer scores ONLY the infusion product (scRNA-seq), NOT the spatial data.**
+1. **Direct gene expression** — examine individual marker genes or gene modules. Use this for specific, mechanistically grounded hypotheses (e.g., checking GZMB, PRF1, TOX levels).
+2. **CellWhisperer scoring** — score cells against natural-language descriptions of cell types and states. Use this for higher-level phenotype queries (e.g., "Exhausted CD8+ T cells", "Central memory T cells").
 
-**Checkpoint:** `/dfs/user/moritzs/cellwhisperer/checkpoints/cellwhisperer_clip_v1.ckpt`
+Both operate on the same h5ad.
 
-- MLP-based transcriptome encoder, BioBERT text encoder, 1024-dim projection
-- logit_scale = 16.7
-- Requires **raw integer counts** as input (applies log1p internally). The full h5ad has log1p-normalized `.X`, so you must convert with `expm1 + round` before scoring (see code below).
+#### The h5ad
 
-### Pre-computed CellWhisperer scores (infusion product)
+- Path: `/dfs/user/moritzs/patientwhisperer/data/infusion_atlas.h5ad`
+- Pre-filtered to B_Product infusion products, low-burden (≤80th percentile SPD), OR/NR only
+- ~36,764 cells, 36,117 genes, 79 patients (43 OR, 36 NR)
+- `.X`: log1p-normalized expression (use directly for gene expression analysis)
+- `.obsm["transcriptome_embeds"]`: precomputed CellWhisperer embeddings (2048-dim, for fast text-query scoring)
 
-Each patient's `infusion_features.csv` contains CellWhisperer scores already computed for a comprehensive set of cell-type and cell-state queries. These are aggregated per patient at three levels: `score_mean` (average enrichment), `score_max` (most extreme cell), `score_p85` (robust high-end signal). Cohort quantiles (`quantile_mean`, `quantile_max`, `quantile_p85`) show how this patient compares to the full cohort.
-
-**Multiple aggregations** reveal different aspects: `mean` for average enrichment, `max` for the most extreme cell, `p85` for robust high-end signal.
-
-### Live CellWhisperer scoring
-
-In addition to the pre-computed features, you can run **novel CellWhisperer queries** to test hypotheses beyond the pre-computed set. Use this to score cells against custom natural-language descriptions of cell states or types.
-
-#### Loading and scoring
+#### Loading (shared setup)
 
 ```python
 import warnings
@@ -78,12 +73,40 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import torch
-from scipy.sparse import issparse
+import scanpy as sc
 
+# Load pre-filtered h5ad (B_Product, low-burden, OR/NR only)
+adata = ad.read_h5ad("/dfs/user/moritzs/patientwhisperer/data/infusion_atlas.h5ad")
+```
+
+#### Direct gene expression analysis
+
+`.X` is **log1p-normalized** — use it directly for gene expression. Do NOT apply `expm1`/`round` (that conversion is only for CellWhisperer's internal transcriptome encoder, which is already handled via precomputed embeddings).
+
+```python
+# Individual marker genes
+gene_df = sc.get.obs_df(adata, keys=["GZMB", "PRF1", "TOX", "PDCD1", "CD8A", "MKI67"])
+gene_df["patient_id"] = adata.obs["patient_id"].values
+
+# Per-patient means
+patient_expr = gene_df.groupby("patient_id").mean()
+
+# Quantile rank vs cohort
+patient_quantiles = patient_expr.rank(pct=True)
+
+# Gene module scoring
+sc.tl.score_genes(adata, gene_list=["GZMB", "PRF1", "GNLY", "NKG7"], score_name="cytotoxicity")
+```
+
+#### CellWhisperer scoring (via precomputed embeddings)
+
+The h5ad contains precomputed transcriptome embeddings in `obsm["transcriptome_embeds"]`. To score cells against novel text queries, embed the text and compute a dot product — no full model forward pass needed.
+
+```python
 from cellwhisperer.utils.model_io import load_cellwhisperer_model
 from cellwhisperer.utils.inference import score_transcriptomes_vs_texts
 
-# Load checkpoint
+# Load model (needed only for text embedding + logit_scale)
 CKPT_PATH = "/dfs/user/moritzs/cellwhisperer/checkpoints/cellwhisperer_clip_v1.ckpt"
 pl_model, tokenizer, transcriptome_processor = (
     load_cellwhisperer_model(model_path=CKPT_PATH, eval=True)
@@ -91,27 +114,13 @@ pl_model, tokenizer, transcriptome_processor = (
 model = pl_model.model
 logit_scale = model.discriminator.temperature.exp()
 
-# Load full h5ad and filter to B_Product + low burden + OR/NR
-FULL_H5AD = "/dfs/user/moritzs/cellwhisperer/data/cellxgene.h5ad"
-adata = ad.read_h5ad(FULL_H5AD)
-adata = adata[adata.obs["timepoint"] == "B_Product"].copy()
+# Load precomputed transcriptome embeddings
+transcriptome_embeds = torch.from_numpy(adata.obsm["transcriptome_embeds"])
 
-# Low-burden filter
-patient_burden = adata.obs.groupby("patient_id")["tumor_burden_SPD"].first()
-threshold = patient_burden.dropna().quantile(0.80)
-keep = patient_burden[(patient_burden <= threshold) | (patient_burden.isna())].index
-adata = adata[adata.obs["patient_id"].isin(keep)].copy()
-adata = adata[adata.obs["Response_3m"].isin(["OR", "NR"])].copy()
-
-# CRITICAL: Convert log1p-normalized .X to approximate raw counts
-# The MLP processor requires raw integer counts (it applies log1p internally)
-X = adata.X.toarray() if issparse(adata.X) else adata.X
-adata.X = np.round(np.expm1(X)).astype(np.float32)
-
-# Score cells against text queries
-queries = ["Exhausted CD8+ T cells expressing PD-1 and TIM-3", "Central memory T cells with CCR7 and CD27 expression", "FOXP3+ regulatory T cells"]
+# Score cells against text queries (pass embeddings as tensor, not AnnData)
+queries = ["Exhausted CD8+ T cells", "Central memory T cells"]
 scores, _ = score_transcriptomes_vs_texts(
-    transcriptome_input=adata,
+    transcriptome_input=transcriptome_embeds,
     text_list_or_text_embeds=queries,
     logit_scale=logit_scale,
     model=model,
@@ -128,6 +137,14 @@ scores_df = pd.DataFrame(
     columns=queries,
 )
 ```
+
+**IMPORTANT: CellWhisperer scores ONLY the infusion product (scRNA-seq), NOT the spatial data.**
+
+#### Pre-computed CellWhisperer scores
+
+Each patient's `infusion_features.csv` contains CellWhisperer scores already computed for ~37 cell-type and cell-state queries. These are aggregated per patient at three levels: `score_mean` (average enrichment), `score_max` (most extreme cell), `score_p85` (robust high-end signal). Cohort quantiles (`quantile_mean`, `quantile_max`, `quantile_p85`) show how this patient compares to the full cohort.
+
+Use `infusion_features.csv` for the standard feature set. Use live scoring (above) for novel queries beyond this set.
 
 #### Patient-level aggregation and statistical testing
 
@@ -160,37 +177,20 @@ patient_scores["ratio_A/B"] = patient_scores["query A"] / (patient_scores["query
 
 #### How to craft effective CellWhisperer queries
 
-CellWhisperer was trained on cell-type annotations from GEO (Gene Expression Omnibus) datasets. It learned to match transcriptomes to the kinds of **descriptive labels** that researchers write when annotating single-cell clusters. This means:
+CellWhisperer was trained on cell-type annotations from GEO datasets. It matches transcriptomes to **descriptive labels** like those in scRNA-seq UMAP legends.
 
-**DO use descriptive cell-type/state labels** — the kind of annotations you'd see in a scRNA-seq paper's UMAP legend:
-- "CD8+ effector memory T cells" ✓
-- "Exhausted CD8+ T cells expressing PD-1 and LAG-3" ✓
-- "Naive CD4+ T cells with high CCR7 and TCF7 expression" ✓
-- "Proliferating T cells in S/G2M phase" ✓
-- "FOXP3+ regulatory T cells" ✓
-- "Central memory T cells expressing IL-7R and CD27" ✓
-- "Terminally differentiated effector T cells" ✓
-- "T cells with high glycolytic activity" ✓
-- "Monocytes" ✓
-- "NK cells" ✓
+**DO use** descriptive cell-type/state labels: "CD8+ effector memory T cells", "Exhausted CD8+ T cells", "Proliferating T cells in S/G2M phase", "T cells with high glycolytic activity".
 
-**DO NOT use semantic/reasoning queries** — CellWhisperer cannot reason about causality, clinical outcomes, or complex biology that isn't captured in cell annotations:
-- "Exhausted T cells that cannot be rescued by checkpoint blockade" ✗ (what transcriptomic feature defines "cannot be rescued"?)
-- "T cells likely to persist in vivo" ✗ (persistence is an outcome, not a transcriptomic descriptor)
-- "Cells responsible for cytokine release syndrome" ✗ (CRS is a clinical outcome)
-- "T cells with high transduction efficiency" ✗ (CAR transduction is not in GEO annotations)
-- "Cells that predict treatment response" ✗ (prediction is not a cell phenotype)
-- "Antigen-experienced T cells" ✗ (vague — what markers define this?)
+**DO NOT use** queries about specific genes (use direct gene expression instead): "Cells expressing PD-1 and LAG-3" (query PDCD1/LAG3 expression directly), "T cells with high CCR7 and TCF7 expression" (query CCR7/TCF7 directly).
 
-**Think about what the underlying transcriptomic signal would be.** If you can't name specific genes, markers, or well-established cell-type labels that would distinguish the query from other queries, the model likely cannot distinguish them either. When in doubt, break a complex query into its concrete components:
-- Instead of "metabolically fit T cells" → use "T cells with high mitochondrial gene expression" + "T cells with high oxidative phosphorylation"
-- Instead of "dysfunctional CAR T cells" → use "Exhausted T cells expressing TOX and PD-1" + "Anergic T cells with low cytokine production"
-- Instead of "T cells with stemness features" → use "T cells expressing TCF7 and LEF1" + "Progenitor-like T cells with high self-renewal markers"
+**DO NOT use** semantic/reasoning queries that invoke causality, clinical outcomes, or concepts not captured in cell annotations: "T cells likely to persist in vivo" (persistence is an outcome), "Cells responsible for CRS" (CRS is clinical), "Cells that predict treatment response" (prediction is not a phenotype).
+
+When in doubt, break complex queries into concrete components with specific markers or well-established cell-type labels.
 
 #### Important notes
 
-- **Model loading** takes ~1-2 minutes and ~10 GB RAM. The full h5ad is 5.7 GB. Plan your analysis to do everything in a single script where possible, but don't hesitate to run follow-up scripts to test refined hypotheses.
-- **Multiple aggregations** often reveal different aspects of the biology. Use `mean` for average enrichment, `max` for the most extreme cell, `frac_high75` for proportion of high-scoring cells, `p85` for robust high-end signal.
+- **Model loading** takes ~1-2 minutes and ~10 GB RAM. The full h5ad is 5.7 GB. Combine multiple queries in a single script to amortize loading cost.
+- **Multiple aggregations** reveal different aspects: `mean` for average enrichment, `max` for the most extreme cell, `p85` for robust high-end signal.
 
 ## Cross-Modal Reasoning
 

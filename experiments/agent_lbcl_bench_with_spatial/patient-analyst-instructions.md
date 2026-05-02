@@ -26,7 +26,7 @@ Follow these four phases strictly and in order. Do NOT skip ahead. Each phase ha
 1. Read `data_sources.json` to determine available modalities.
 2. Read `clinical.json` and all available feature files (`infusion_features.csv`, `spatial_features.csv`).
 3. For each data source, produce a structured profile:
-   - **Infusion product** (if available): List all features with extreme quantiles (<0.10 or >0.90). For each, report the feature name, score_mean, quantile_mean, and z-score relative to cohort statistics in the CSV. Also compute and report ratios between opposing cell states (e.g., Proliferating/Quiescent, Cytotoxic/Anergic, Effector/Exhausted, CD8/CD4) using score_mean values.
+   - **Infusion product** (if available): List all features with extreme quantiles (<0.10 or >0.90). For each, report the feature name, score_mean, quantile_mean, and z-score relative to cohort statistics in the CSV. Also compute and report ratios between opposing cell states (e.g., Proliferating/Quiescent, Cytotoxic/Anergic, Effector/Exhausted, CD8/CD4) using score_mean values. Additionally, you may examine key marker genes directly from the h5ad (see "Direct gene expression analysis" in shared_context.md) and report per-patient expression quantiles for genes relevant to the patient's profile.
    - **Spatial TME** (if available): List all cell type proportions and proximity scores with extreme quantiles (<0.10 or >0.90). Report the value, quantile, and which cell types are unusually enriched, depleted, or co-localized.
    - **Clinical**: Report age, gender, therapy, LDH, tumor burden, CRS/ICANS grades. Flag any unusual values.
 4. Output: A structured table of observations. No narrative. No causal claims. No "this suggests" or "this indicates."
@@ -59,12 +59,12 @@ For EACH hypothesis from Phase 2, do the following:
    - If the hypothesis claims TME suppression: are there spatial features showing immune infiltration, low Treg proximity, or low myeloid content?
    - If the hypothesis invokes a ratio (e.g., CD8/CD4): check whether both numerator and denominator are individually extreme, or just one.
 
-3. **Run novel CellWhisperer queries when needed.** If a hypothesis involves an infusion product signal not covered by the pre-computed features in `infusion_features.csv`, use live CellWhisperer scoring to test it. See `shared_context.md` for the full scoring code and query guidelines. Follow this workflow:
-   - Write a Python script that loads the full cohort h5ad (all 79 patients), scores ALL cells against your query, and aggregates per patient (mean, max, p85).
+3. **Probe with gene expression and/or CellWhisperer.** Use direct gene expression for specific marker checks (e.g., verifying GZMB/PRF1 levels for a cytotoxicity hypothesis) and CellWhisperer for higher-level cell-state queries not covered by pre-computed features. See "Analyzing Infusion Product Data" in `shared_context.md` for both approaches. Follow this workflow:
+   - Write a Python script that loads the full cohort h5ad (all 79 patients), analyzes ALL patients, and aggregates per patient.
    - Compute this patient's **quantile rank** relative to the full cohort distribution.
    - Compare OR vs NR distributions (Mann-Whitney U test).
-   - **You MUST score the entire cohort, not just this patient.** A score is meaningless without cohort context.
-   - Combine multiple related queries in a single script to amortize the ~2 min model loading cost.
+   - **You MUST analyze the entire cohort, not just this patient.** A score is meaningless without cohort context.
+   - Combine multiple queries/genes in a single script to amortize loading cost.
 
 4. **Check quantitative thresholds.** A mechanism is only credible if the supporting features are genuinely extreme:
    - **High confidence**: quantile <0.10 or >0.90 AND |z-score| > 1.5
