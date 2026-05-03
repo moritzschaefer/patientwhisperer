@@ -49,12 +49,12 @@ You are an AI agent analyzing CAR T cell therapy data for Large B-Cell Lymphoma 
 
 ### Analyzing Infusion Product Data
 
-You have two complementary approaches for analyzing infusion product scRNA-seq:
+You have two complementary approaches for analyzing infusion product scRNA-seq, based on the provided h5ad file.
 
 1. **Direct gene expression** — examine individual marker genes or gene modules. Use this for specific, mechanistically grounded hypotheses (e.g., checking GZMB, PRF1, TOX levels).
 2. **CellWhisperer scoring** — score cells against natural-language descriptions of cell types and states. Use this for higher-level phenotype queries (e.g., "Exhausted CD8+ T cells", "Central memory T cells").
 
-Both operate on the same h5ad.
+Below, I list code snippets that you may use for analysis. Yet, note that you can freely write code to guide your analysis.
 
 #### The h5ad
 
