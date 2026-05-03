@@ -23,6 +23,7 @@ from scipy.sparse import issparse
 
 from cellwhisperer.utils.model_io import load_cellwhisperer_model
 from cellwhisperer.utils.inference import score_left_vs_right
+from cellwhisperer.utils.processing import adata_to_embeds
 
 OAK = os.environ.get("OAK_ROOT", "/oak/stanford/groups/zinaida")
 FULL_H5AD = f"{OAK}/moritzs/cellwhisperer/results/cd19_atlas_v1/cellwhisperer_clip_v1/cellxgene.h5ad"
@@ -136,6 +137,22 @@ if __name__ == "__main__":
         index=adata.obs_names,
         columns=QUERIES,
     )
+
+    # Compute transcriptome embeddings for fast live scoring
+    # .X is already raw counts at this point, which is what adata_to_embeds needs
+    print("Computing transcriptome embeddings...", flush=True)
+    transcriptome_embeds = adata_to_embeds(
+        adata, model, transcriptome_processor, batch_size=32,
+    )
+    print(f"  Embeddings shape: {transcriptome_embeds.shape}", flush=True)
+
+    # Save pre-filtered h5ad with log1p-normalized .X + embeddings (for agent use)
+    adata.X = np.log1p(adata.X)  # restore log1p normalization
+    adata.obsm["transcriptome_embeds"] = transcriptome_embeds.cpu().numpy()
+    embed_h5ad = "/dfs/user/moritzs/patientwhisperer/data/infusion_atlas.h5ad"
+    os.makedirs(os.path.dirname(embed_h5ad), exist_ok=True)
+    print(f"Saving h5ad with embeddings to {embed_h5ad}...", flush=True)
+    adata.write_h5ad(embed_h5ad)
     scores_df["patient_id"] = adata.obs["patient_id"].values
     scores_df["Response_3m"] = adata.obs["Response_3m"].values
 

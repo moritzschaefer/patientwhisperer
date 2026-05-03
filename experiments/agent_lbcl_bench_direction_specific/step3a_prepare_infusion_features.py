@@ -97,13 +97,8 @@ if __name__ == "__main__":
             print(f"  NOTE: RDS files found ({rds_files[:5]}...) — may contain additional patients.", flush=True)
             print(f"  RDS conversion not implemented; using processed h5ad only.", flush=True)
 
-    # Low-burden filter
-    patient_burden = adata.obs.groupby("patient_id")["tumor_burden_SPD"].first()
-    threshold = patient_burden.dropna().quantile(0.80)
-    keep = patient_burden[(patient_burden <= threshold) | (patient_burden.isna())].index
-    adata = adata[adata.obs["patient_id"].isin(keep)].copy()
     adata = adata[adata.obs["Response_3m"].isin(["OR", "NR"])].copy()
-    print(f"  After filters: {adata.shape[0]} cells, {adata.obs['patient_id'].nunique()} patients", flush=True)
+    print(f"  After OR/NR filter: {adata.shape[0]} cells, {adata.obs['patient_id'].nunique()} patients", flush=True)
 
     # CRITICAL: Convert log1p-normalized .X to approximate raw counts
     print("Converting to raw counts (expm1 + round)...", flush=True)
@@ -136,6 +131,7 @@ if __name__ == "__main__":
         index=adata.obs_names,
         columns=QUERIES,
     )
+
     scores_df["patient_id"] = adata.obs["patient_id"].values
     scores_df["Response_3m"] = adata.obs["Response_3m"].values
 

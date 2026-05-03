@@ -111,7 +111,7 @@ def _infer_direction(verbal_summary: str) -> str:
 class BenchMatcher:
     """Deterministic LLM-based benchmark mechanism matcher with per-pair caching."""
 
-    def __init__(self, cache_dir: str, batch_size: int = 50, timeout: int = 180):
+    def __init__(self, cache_dir: str, batch_size: int = 15, timeout: int = 180):
         self.cache_dir = cache_dir
         self.batch_size = batch_size
         self.timeout = timeout
@@ -400,7 +400,7 @@ def main():
     parser.add_argument("--patient-dir", required=True, help="Path to step3_per_patient results")
     parser.add_argument("--output-dir", required=True, help="Output directory for evaluation CSVs")
     parser.add_argument("--cache-dir", default=None, help="Cache directory (default: output-dir/_match_cache)")
-    parser.add_argument("--batch-size", type=int, default=50)
+    parser.add_argument("--batch-size", type=int, default=15)
     args = parser.parse_args()
 
     cache_dir = args.cache_dir or os.path.join(args.output_dir, "_match_cache")

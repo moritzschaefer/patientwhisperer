@@ -1,0 +1,14 @@
+[project]
+name = "agent-lbcl-bench-with-spatial"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+    "pyarrow",
+    "pandas",
+    "openpyxl",
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "anndata",
+    "python-calamine>=0.6.2",
+]

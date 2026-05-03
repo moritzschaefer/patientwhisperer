@@ -1,10 +1,12 @@
 #!/bin/bash
 #SBATCH --account=infolab
 #SBATCH --partition=il-interactive
+#SBATCH --qos=il-interactive
 #SBATCH --nodelist=hyperturing2
-#SBATCH --cpus-per-task=2
-#SBATCH --mem=8G
-#SBATCH --time=01:30:00
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=64G
+#SBATCH --gres=gpu:1
+#SBATCH --time=02:00:00
 #SBATCH --array=0-97%4
 #SBATCH --output=/dfs/user/moritzs/patientwhisperer/results/logs/step3_patient_%A_%a.out
 #SBATCH --error=/dfs/user/moritzs/patientwhisperer/results/logs/step3_patient_%A_%a.err
@@ -39,7 +41,7 @@ if [ -z "$PID" ]; then
 fi
 
 # Skip already-completed patients
-RESULT_FILE=results/step3_per_patient/$PID.json
+RESULT_FILE=results/step3_cw_live/$PID.json
 if [ -f "$RESULT_FILE" ] && python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get('status')=='success' else 1)" "$RESULT_FILE" 2>/dev/null; then
     echo "Patient $PID already completed, skipping"
     exit 0
@@ -49,5 +51,5 @@ echo "Analyzing patient $PID (task $SLURM_ARRAY_TASK_ID)"
 
 python3 run_agent.py patient \
     --patient-dir data/patients/$PID \
-    --output results/step3_per_patient/$PID.json \
-    --raw-output results/step3_per_patient/${PID}_raw.txt
+    --output results/step3_cw_live/$PID.json \
+    --raw-output results/step3_cw_live/${PID}_raw.txt

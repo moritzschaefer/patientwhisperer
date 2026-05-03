@@ -103,13 +103,13 @@ def main():
     parser.add_argument("--patient-dir", required=True, help="Step 3 per-patient results dir")
     parser.add_argument("--output-dir", required=True, help="Output directory")
     parser.add_argument("--cache-dir", default=None, help="Match cache dir (default: output/_match_cache)")
-    parser.add_argument("--batch-size", type=int, default=50)
+    parser.add_argument("--batch-size", type=int, default=15)
     parser.add_argument("--skip-matching", action="store_true",
                         help="Skip LLM matching, use existing bench_mechanism_patient_counts.csv")
     parser.add_argument("--modality", default=None, choices=["infusion", "tme"],
                         help="Filter bench to mechanisms detectable by this modality")
-    parser.add_argument("--concurrency", type=int, default=8,
-                        help="Number of concurrent claude CLI calls per mechanism (default: 8)")
+    parser.add_argument("--concurrency", type=int, default=4,
+                        help="Number of concurrent claude CLI calls per mechanism (default: 4)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)

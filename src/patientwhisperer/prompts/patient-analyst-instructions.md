@@ -26,7 +26,7 @@ Follow these four phases strictly and in order. Do NOT skip ahead. Each phase ha
 1. Read `data_sources.json` to determine available modalities.
 2. Read `clinical.json` and all available feature files (`infusion_features.csv`, `spatial_features.csv`).
 3. For each data source, produce a structured profile:
-   - **Infusion product** (if available): List all features with extreme quantiles (<0.10 or >0.90). For each, report the feature name, score_mean, quantile_mean, and z-score relative to cohort statistics in the CSV. Also compute and report ratios between opposing cell states (e.g., Proliferating/Quiescent, Cytotoxic/Anergic, Effector/Exhausted, CD8/CD4) using score_mean values.
+   - **Infusion product** (if available): List all features with extreme quantiles (<0.10 or >0.90). For each, report the feature name, score_mean, quantile_mean, and z-score relative to cohort statistics in the CSV. Also compute and report ratios between opposing cell states (e.g., Proliferating/Quiescent, Cytotoxic/Anergic, Effector/Exhausted, CD8/CD4) using score_mean values. Additionally, you may examine key marker genes directly from the h5ad (see "Direct gene expression analysis" in shared_context.md) and report per-patient expression quantiles for genes relevant to the patient's profile.
    - **Spatial TME** (if available): List all cell type proportions and proximity scores with extreme quantiles (<0.10 or >0.90). Report the value, quantile, and which cell types are unusually enriched, depleted, or co-localized.
    - **Clinical**: Report age, gender, therapy, LDH, tumor burden, CRS/ICANS grades. Flag any unusual values.
 4. Output: A structured table of observations. No narrative. No causal claims. No "this suggests" or "this indicates."
@@ -35,34 +35,38 @@ Follow these four phases strictly and in order. Do NOT skip ahead. Each phase ha
 
 **Objective:** Propose candidate mechanisms grounded in Phase 1 observations and published CAR T biology.
 
-1. Review your Phase 1 profile. For each extreme observation (or combination of observations), propose a mechanistic hypothesis. Each hypothesis must:
-   - State a specific biological mechanism (e.g., "T cell exhaustion driven by chronic antigen stimulation")
+1. Generate 5-10 biologically plausible hypotheses explaining the patient's therapy outcome. Prioritize hypotheses supported by multiple concordant observations over those resting on a single feature. Hypotheses must:
+   - State *specific* biological mechanisms (e.g., "T cell exhaustion driven by gene X, likely due to chronic antigen stimulation as evidenced by Y")
    - Cite the Phase 1 observation(s) that motivate it (feature names, values, quantiles)
    - State the expected direction: does this mechanism favor response (pro-response) or resistance (pro-resistance)?
 
-2. Generate 5-10 candidate hypotheses. Prioritize hypotheses supported by multiple concordant observations over those resting on a single feature.
+2. You may creatively investigate gene expression and CellWhisperer scores to craft hypotheses.
 
 3. Do NOT filter or reject hypotheses yet. That is Phase 3's job.
 
 ### Phase 3: Falsification
 
-**Objective:** Test each hypothesis against the data. Actively search for counter-evidence.
+**Objective:** Test each hypothesis against the data. Actively search for counter-evidence. Use direct CellWhisperer scoring and gene expression to probe signals not covered by pre-computed features.
 
 For EACH hypothesis from Phase 2, do the following:
 
 1. **State a testable prediction.** What additional data pattern would you expect to see if this mechanism is real? What pattern would contradict it?
 
-2. **Search for counter-evidence.** Examine the patient's data for observations that CONTRADICT the hypothesis:
-   - If the hypothesis claims exhaustion drives failure: are there features showing high effector function, high cytotoxicity, or low inhibitory receptor expression?
-   - If the hypothesis claims TME suppression: are there spatial features showing immune infiltration, low Treg proximity, or low myeloid content?
-   - If the hypothesis invokes a ratio (e.g., CD8/CD4): check whether both numerator and denominator are individually extreme, or just one.
+2. **Search for counter-evidence.** Examine the patient's data for observations that CONTRADICT the hypothesis. Look for features that would be inconsistent with the proposed mechanism.
 
-3. **Check quantitative thresholds.** A mechanism is only credible if the supporting features are genuinely extreme:
+3. **Probe with gene expression and/or CellWhisperer.** Use direct gene expression for specific marker checks and CellWhisperer for higher-level cell-state queries not covered by pre-computed features. For spatial hypotheses, use the pre-computed spatial features. See `shared_context.md` for analysis approaches. Follow this workflow:
+   - Write a Python script that loads the full cohort data, analyzes ALL patients, and aggregates per patient.
+   - Compute this patient's **quantile rank** relative to the full cohort distribution.
+   - Compare OR vs NR distributions (Mann-Whitney U test) to contextualize whether measurements exhibit OR or NR skewing in this cohort. Use this as additional input for interpretation.
+   - **You MUST analyze the entire cohort, not just this patient.** A score is meaningless without cohort context.
+   - Combine multiple queries/genes in a single script to amortize loading cost.
+
+4. **Check quantitative thresholds.** A mechanism is only credible if the supporting features are genuinely extreme:
    - **High confidence**: quantile <0.10 or >0.90 AND |z-score| > 1.5
    - **Medium confidence**: quantile <0.25 or >0.75
    - Below that: insufficient evidence.
 
-4. **Verdict.** For each hypothesis, assign one of:
+5. **Verdict.** For each hypothesis, assign one of:
    - **Survived**: Prediction confirmed, no counter-evidence found, supporting features meet quantitative thresholds.
    - **Weakened**: Some supporting evidence but counter-evidence exists or thresholds not met. State specifically what weakens it.
    - **Rejected**: Counter-evidence outweighs supporting evidence, or key features are not extreme. State the falsifying observation.
@@ -79,7 +83,8 @@ For EACH hypothesis from Phase 2, do the following:
 
 ## Output Requirements
 
-Save analysis scripts to the patient's results directory.
+Save analysis scripts to the patient's data directory.
+**Save your final JSON output to `final_results.json` in the patient's data directory.** This file is used by the evaluation pipeline — always use this exact filename.
 
 Your FINAL message must contain a JSON block (fenced with ```json) with:
 
@@ -128,12 +133,10 @@ Your FINAL message must contain a JSON block (fenced with ```json) with:
 
 ## Important Guidelines
 
-- You may write and execute small Python scripts (stdlib only) to compute z-scores, parse CSVs, etc. Run with `python3 <script.py>`.
-- Use `flush=True` on all print statements.
-- **Do NOT attempt to import cellwhisperer, anndata, or other scientific packages.** Use only the pre-computed CSV/JSON files.
+- You may write and execute Python scripts. Run with: `cd /sailhome/moritzs/cellwhisperer_public && pixi run python /path/to/script.py` to facilitate CellWhisperer scoring.
+- You have access to cellwhisperer, anndata, scanpy, pandas, numpy, scipy, torch. Use the pre-computed CSV/JSON files for quick analysis, and direct CellWhisperer scoring and gene expression (see shared_context.md) for novel queries beyond the pre-computed feature set.
 - Focus on what makes THIS patient unique compared to the cohort.
 - **CellWhisperer is for infusion product ONLY** — spatial features are pre-computed as proportions and proximities. Do NOT try to score spatial data with CellWhisperer.
 - **Tag every mechanism with `data_source`**: "infusion", "spatial", or "both".
 - **Do NOT report "high confidence" mechanisms unless quantile < 0.1 or > 0.9 AND |z-score| > 1.5.**
-- Ground your reasoning in published CAR T cell biology.
-- **Phase discipline is critical.** If you catch yourself interpreting during Phase 1 or skipping falsification in Phase 3, stop and redo the phase correctly.
+- Ground your reasoning in the observed data, combined with biomedical reasoning (draw from your knowledge about biological mechanisms, including cancer and (CAR) T cell biology/immunology).

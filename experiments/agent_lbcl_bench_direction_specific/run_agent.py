@@ -32,7 +32,7 @@ from patientwhisperer.agent import (
 
 AGENT_FRAMEWORK = os.environ.get("AGENT_FRAMEWORK", "claudecode")
 SYSTEM_PROMPT_FILE = "system_prompt_combined.md"
-SYSTEM_PROMPT_PARTS = ["shared_context.md", "patient-analyst-instructions.md"]
+SYSTEM_PROMPT_PARTS = ["shared_context.md", "../../src/patientwhisperer/prompts/patient-analyst-instructions.md"]
 
 
 def build_prompt(pdata: dict) -> str:
@@ -91,9 +91,9 @@ def cmd_patient(args):
     )
 
     if AGENT_FRAMEWORK == "claudecode":
-        stdout, stderr, rc = run_claudecode(prompt, SYSTEM_PROMPT_FILE, timeout=1800)
+        stdout, stderr, rc = run_claudecode(prompt, SYSTEM_PROMPT_FILE, timeout=3600)
     else:
-        stdout, stderr, rc = run_opencode("patient-analyst", prompt, timeout=1800)
+        stdout, stderr, rc = run_opencode("patient-analyst", prompt, timeout=3600)
 
     result = process_agent_output(stdout, stderr, rc, pdata, AGENT_FRAMEWORK)
     save_result(result, args.output, args.raw_output, stdout, stderr)
