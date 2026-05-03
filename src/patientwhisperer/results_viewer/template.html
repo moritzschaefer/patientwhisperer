@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{TITLE}}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', -apple-system, sans-serif; background: #f5f5f5; color: #1a1a1a; line-height: 1.5; }
+.header { background: #1a1a2e; color: #eee; padding: 24px 32px; }
+.header h1 { font-size: 22px; font-weight: 600; }
+.header p { font-size: 13px; color: #aaa; margin-top: 4px; }
+.tabs { display: flex; flex-wrap: wrap; background: #16213e; border-bottom: 2px solid #0f3460; }
+.tab { padding: 10px 18px; cursor: pointer; color: #aaa; font-size: 13px; font-weight: 500; border-bottom: 3px solid transparent; transition: all 0.2s; }
+.tab:hover { color: #fff; background: rgba(255,255,255,0.05); }
+.tab.active { color: #fff; border-bottom-color: #e94560; background: rgba(255,255,255,0.08); }
+.tab .badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 8px; margin-left: 4px; font-weight: 600; }
+.tab .badge.or { background: #2d6a4f; color: #b7e4c7; }
+.tab .badge.nr { background: #9d0208; color: #fcd5ce; }
+.content { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.patient-panel { display: none; }
+.patient-panel.active { display: block; }
+.card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px; overflow: hidden; }
+.card-header { padding: 14px 20px; font-weight: 600; font-size: 14px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.card-header:hover { background: #fafafa; }
+.card-header .chevron { transition: transform 0.2s; font-size: 12px; color: #888; }
+.card.open .chevron { transform: rotate(90deg); }
+.card-body { padding: 0 20px 16px; display: none; }
+.card.open .card-body { display: block; }
+.phase-header { background: #e8f4f8; border-left: 4px solid #0077b6; }
+.phase1 .phase-header { border-left-color: #457b9d; }
+.phase2 .phase-header { border-left-color: #e9c46a; }
+.phase3 .phase-header { border-left-color: #e76f51; }
+.phase4 .phase-header { border-left-color: #2a9d8f; }
+.mech { border-left: 4px solid #ddd; padding: 12px 16px; margin: 10px 0; background: #fafafa; border-radius: 0 6px 6px 0; }
+.mech.survived { border-left-color: #2d6a4f; }
+.mech.weakened { border-left-color: #e9c46a; }
+.mech.rejected { border-left-color: #9d0208; }
+.mech-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+.mech-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.tag.high { background: #d4edda; color: #155724; }
+.tag.medium { background: #fff3cd; color: #856404; }
+.tag.pro-response { background: #cce5ff; color: #004085; }
+.tag.pro-resistance { background: #f8d7da; color: #721c24; }
+.tag.survived { background: #d4edda; color: #155724; }
+.tag.weakened { background: #fff3cd; color: #856404; }
+.tag.infusion { background: #e2e3f1; color: #383d6e; }
+.tag.spatial { background: #e0f7e9; color: #1b5e20; }
+.tag.both { background: #f3e5f5; color: #6a1b9a; }
+.evidence, .counter { font-size: 13px; margin: 6px 0; padding: 8px 12px; border-radius: 4px; }
+.evidence { background: #e8f5e9; }
+.counter { background: #fff8e1; }
+.evidence-label, .counter-label { font-weight: 600; font-size: 11px; text-transform: uppercase; color: #666; margin-bottom: 2px; }
+.clinical-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.clinical-table td, .clinical-table th { padding: 6px 12px; text-align: left; border-bottom: 1px solid #eee; }
+.clinical-table th { font-weight: 600; color: #555; width: 180px; }
+.narrative { font-size: 14px; line-height: 1.7; white-space: pre-wrap; }
+.unusual { display: inline-block; font-size: 12px; background: #fff0f0; padding: 2px 8px; border-radius: 4px; margin: 2px; }
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+.summary-stat { text-align: center; padding: 16px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.summary-stat .num { font-size: 28px; font-weight: 700; }
+.summary-stat .label { font-size: 12px; color: #666; }
+.followup { font-size: 13px; color: #555; padding-left: 16px; }
+.followup li { margin: 4px 0; }
+.effect-meta { font-size: 12px; color: #666; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>{{TITLE}}</h1>
+  <p id="subtitle"></p>
+</div>
+<div class="tabs" id="tabs"></div>
+<div class="content" id="content"></div>
+
+<script>
+const data = {{PATIENT_DATA}};
+const patientOrder = {{PATIENT_ORDER}};
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderTabs() {
+  const tabs = document.getElementById('tabs');
+  patientOrder.forEach((pid, i) => {
+    const p = data[pid];
+    const resp = p.response || '?';
+    const badge = resp === 'OR' ? 'or' : 'nr';
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (i === 0 ? ' active' : '');
+    tab.dataset.pid = pid;
+    tab.innerHTML = `Patient ${pid} <span class="badge ${badge}">${resp}</span>`;
+    tab.onclick = () => switchTab(pid);
+    tabs.appendChild(tab);
+  });
+  const nOR = patientOrder.filter(p => data[p].response === 'OR').length;
+  const nNR = patientOrder.length - nOR;
+  document.getElementById('subtitle').textContent = `${patientOrder.length} patients (${nOR} OR, ${nNR} NR)`;
+}
+
+function switchTab(pid) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.pid === pid));
+  document.querySelectorAll('.patient-panel').forEach(p => p.classList.toggle('active', p.dataset.pid === pid));
+}
+
+function makeCard(title, body, phaseClass, open) {
+  return `<div class="card ${phaseClass || ''} ${open ? 'open' : ''}">
+    <div class="card-header ${phaseClass ? 'phase-header' : ''}" onclick="this.parentElement.classList.toggle('open')">
+      ${title} <span class="chevron">&#9654;</span>
+    </div>
+    <div class="card-body">${body}</div>
+  </div>`;
+}
+
+function renderPatient(pid) {
+  const p = data[pid];
+  const mechs = p.mechanisms_identified || [];
+  const rejected = p.rejected_hypotheses || [];
+  const profile = p.phase1_profile || {};
+  const unusual = p.unusual_features || [];
+
+  let html = '<div class="summary-grid">';
+  html += `<div class="summary-stat"><div class="num">${mechs.length}</div><div class="label">Mechanisms</div></div>`;
+  html += `<div class="summary-stat"><div class="num">${rejected.length}</div><div class="label">Rejected</div></div>`;
+  html += `<div class="summary-stat"><div class="num">${mechs.filter(m=>m.confidence==='high').length}</div><div class="label">High Confidence</div></div>`;
+  html += `<div class="summary-stat"><div class="num">${unusual.length}</div><div class="label">Unusual Features</div></div>`;
+  html += '</div>';
+
+  // Phase 1: Clinical
+  let clinBody = '<table class="clinical-table">';
+  clinBody += `<tr><th>Response (3m)</th><td>${p.response || '?'}</td></tr>`;
+  clinBody += `<tr><th>Clinical Summary</th><td>${escapeHtml(p.clinical_summary)}</td></tr>`;
+  if (profile.n_extreme_infusion !== undefined)
+    clinBody += `<tr><th>Extreme infusion features</th><td>${profile.n_extreme_infusion}</td></tr>`;
+  if (profile.n_extreme_spatial !== undefined && profile.n_extreme_spatial > 0)
+    clinBody += `<tr><th>Extreme spatial features</th><td>${profile.n_extreme_spatial}</td></tr>`;
+  if (profile.key_ratios) {
+    const ratios = Object.entries(profile.key_ratios).map(([k,v]) => `${k}: ${typeof v === 'number' ? v.toFixed(2) : v}`).join(', ');
+    clinBody += `<tr><th>Key Ratios</th><td>${ratios}</td></tr>`;
+  }
+  clinBody += '</table>';
+  html += makeCard('Phase 1: Clinical Profile &amp; Quantitative Observations', clinBody, 'phase1', true);
+
+  // Phase 2+3: Mechanisms
+  let mechBody = '';
+  mechs.forEach((m, i) => {
+    const verdict = m.falsification_verdict || '?';
+    mechBody += `<div class="mech ${verdict}">`;
+    mechBody += `<div class="mech-title">${i+1}. ${escapeHtml(m.mechanism)}</div>`;
+    mechBody += '<div class="mech-meta">';
+    mechBody += `<span class="tag ${m.confidence || ''}">${m.confidence || '?'}</span>`;
+    mechBody += `<span class="tag ${(m.direction||'').replace(/[ -]/g,'')}">${m.direction || '?'}</span>`;
+    mechBody += `<span class="tag ${verdict}">${verdict}</span>`;
+    mechBody += `<span class="tag ${m.data_source || ''}">${m.data_source || '?'}</span>`;
+    mechBody += '</div>';
+    if (m.evidence)
+      mechBody += `<div class="evidence"><div class="evidence-label">Evidence</div>${escapeHtml(m.evidence)}</div>`;
+    if (m.counter_evidence)
+      mechBody += `<div class="counter"><div class="counter-label">Counter-evidence searched</div>${escapeHtml(m.counter_evidence)}</div>`;
+    if (m.effect_size || m.patient_percentile)
+      mechBody += `<div class="effect-meta">Effect: ${escapeHtml(m.effect_size)} | Percentile: ${escapeHtml(m.patient_percentile)}</div>`;
+    mechBody += '</div>';
+  });
+  html += makeCard(`Phase 2&rarr;3: Mechanisms (${mechs.length} survived)`, mechBody, 'phase3', true);
+
+  // Rejected
+  if (rejected.length > 0) {
+    let rejBody = '';
+    rejected.forEach(r => {
+      rejBody += `<div class="mech rejected">`;
+      rejBody += `<div class="mech-title">${escapeHtml(r.hypothesis)}</div>`;
+      rejBody += `<div class="counter"><div class="counter-label">Falsifying observation</div>${escapeHtml(r.falsifying_observation)}</div>`;
+      rejBody += '</div>';
+    });
+    html += makeCard(`Rejected Hypotheses (${rejected.length})`, rejBody, 'phase2', false);
+  }
+
+  // Phase 4: Narrative
+  if (p.narrative)
+    html += makeCard('Phase 4: Synthesis Narrative', `<div class="narrative">${escapeHtml(p.narrative)}</div>`, 'phase4', false);
+
+  // Toxicity
+  const tox = p.toxicity_analysis;
+  if (tox && (tox.crs_grade !== null || tox.icans_grade !== null)) {
+    let toxBody = '<table class="clinical-table">';
+    if (tox.crs_grade !== null) toxBody += `<tr><th>CRS Grade</th><td>${tox.crs_grade}</td></tr>`;
+    if (tox.icans_grade !== null) toxBody += `<tr><th>ICANS Grade</th><td>${tox.icans_grade}</td></tr>`;
+    if (tox.crs_mechanisms) toxBody += `<tr><th>CRS Mechanisms</th><td>${escapeHtml(tox.crs_mechanisms.join('; '))}</td></tr>`;
+    if (tox.icans_mechanisms) toxBody += `<tr><th>ICANS Mechanisms</th><td>${escapeHtml(tox.icans_mechanisms.join('; '))}</td></tr>`;
+    toxBody += '</table>';
+    html += makeCard('Toxicity Analysis', toxBody, '', false);
+  }
+
+  // Unusual features
+  if (unusual.length > 0) {
+    let unusualBody = unusual.map(u => `<span class="unusual">${escapeHtml(u)}</span>`).join(' ');
+    html += makeCard('Unusual Features', unusualBody, '', false);
+  }
+
+  // Follow-up
+  const followup = p.suggested_follow_up || [];
+  if (followup.length > 0) {
+    let fuBody = '<ul class="followup">' + followup.map(f => `<li>${escapeHtml(f)}</li>`).join('') + '</ul>';
+    html += makeCard('Suggested Follow-up', fuBody, '', false);
+  }
+
+  return html;
+}
+
+function init() {
+  renderTabs();
+  const content = document.getElementById('content');
+  patientOrder.forEach((pid, i) => {
+    const panel = document.createElement('div');
+    panel.className = 'patient-panel' + (i === 0 ? ' active' : '');
+    panel.dataset.pid = pid;
+    panel.innerHTML = renderPatient(pid);
+    content.appendChild(panel);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
