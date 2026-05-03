@@ -1,24 +1,35 @@
 """
-Stable agent dispatch module for PatientWhisperer per-patient analyses.
+Agent dispatch module for PatientWhisperer per-patient analyses.
 
-Provides reusable plumbing for invoking Claude Code CLI, extracting
-structured JSON from agent output, loading patient data, and saving results.
+Provides the complete pipeline: prompt assembly, agent invocation,
+JSON extraction, patient data loading, and result saving.
 
-Each experiment's run_agent.py should import from this module and customize
-only the prompt construction logic.
+Can be used as a library or run directly:
 
-Usage:
-    from patientwhisperer.agent import (
-        run_claudecode, extract_json, build_system_prompt,
-        load_patient_data, save_result,
-    )
+    python -m patientwhisperer.agent patient \
+        --patient-dir data/patients/PAT01 \
+        --output results/PAT01.json \
+        --raw-output results/PAT01_raw.txt
 """
+import argparse
 import json
 import math
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
+
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+PROMPTS_DIR = Path(__file__).parent / "prompts"
+SYSTEM_PROMPT_PARTS = [
+    PROMPTS_DIR / "shared_context.md",
+    PROMPTS_DIR / "patient-analyst-instructions.md",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -403,3 +414,123 @@ def process_agent_output(
         "mechanisms_identified": [],
         "data_sources_available": pdata["data_sources"],
     }
+
+
+# ---------------------------------------------------------------------------
+# User prompt construction
+# ---------------------------------------------------------------------------
+
+def build_prompt(pdata: dict) -> str:
+    """Build the user prompt for per-patient mechanism analysis."""
+    pid = pdata["patient_id"]
+    response = pdata["response"]
+    age = pdata["age"]
+    gender = pdata["gender"]
+    therapy = pdata["therapy"]
+
+    modality_section = build_modality_section(pdata)
+    files_section = build_files_section(pdata)
+    toxicity_section = build_toxicity_section(pdata)
+    cross_modal = build_cross_modal_section(pdata)
+
+    if response != "unknown":
+        response_instruction = (
+            f"Explain why this patient "
+            f"{'responded' if response == 'OR' else 'did not respond'} "
+            f"to CAR T therapy."
+        )
+    else:
+        response_instruction = (
+            "Characterize this patient's tumor microenvironment and identify "
+            "features that may predict CAR T therapy outcome."
+        )
+
+    return (
+        f"Analyze patient {pid} (Response_3m={response}, age={age}, "
+        f"gender={gender}, therapy={therapy}).\n\n"
+        f"## Available Data Modalities\n\n{modality_section}\n\n"
+        f"## Patient Data Directory\n\n"
+        f"Path: {pdata['patient_dir']}\n"
+        f"Files:\n{files_section}\n\n"
+        f"Perform a comprehensive mechanistic analysis of this patient. "
+        f"{response_instruction}"
+        f"{toxicity_section}"
+        f"{cross_modal}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Single-patient analysis entry point
+# ---------------------------------------------------------------------------
+
+def analyze_patient(
+    patient_dir: str,
+    output: str,
+    raw_output: str,
+    *,
+    system_prompt_parts: list[str | Path] | None = None,
+    framework: str = "claudecode",
+) -> dict:
+    """Run the full per-patient analysis pipeline.
+
+    Args:
+        patient_dir: Path to the patient data directory.
+        output: Path for the structured JSON result.
+        raw_output: Path for the raw agent output.
+        system_prompt_parts: List of prompt file paths. Defaults to
+            SYSTEM_PROMPT_PARTS (shared_context.md + patient-analyst-instructions.md).
+        framework: "claudecode" or "opencode".
+
+    Returns:
+        Parsed result dict.
+    """
+    parts = system_prompt_parts or SYSTEM_PROMPT_PARTS
+    pdata = load_patient_data(patient_dir)
+    pid = pdata["patient_id"]
+
+    # Assemble system prompt
+    system_prompt_file = os.path.join(os.path.dirname(output), "system_prompt_combined.md")
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+    build_system_prompt([str(p) for p in parts], system_prompt_file)
+
+    prompt = build_prompt(pdata)
+
+    print(
+        f"Analyzing patient {pid} ({pdata['response']}, "
+        f"infusion={pdata['has_infusion']}, spatial={pdata['has_spatial']})...",
+        flush=True,
+    )
+
+    if framework == "claudecode":
+        stdout, stderr, rc = run_claudecode(prompt, system_prompt_file, timeout=3600)
+    else:
+        stdout, stderr, rc = run_opencode("patient-analyst", prompt, timeout=3600)
+
+    result = process_agent_output(stdout, stderr, rc, pdata, framework)
+    save_result(result, output, raw_output, stdout, stderr)
+    print(f"  Saved to {output}", flush=True)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="PatientWhisperer per-patient agent analysis"
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    p_patient = subparsers.add_parser("patient")
+    p_patient.add_argument("--patient-dir", required=True)
+    p_patient.add_argument("--output", required=True)
+    p_patient.add_argument("--raw-output", required=True)
+
+    args = parser.parse_args()
+    if args.command == "patient":
+        analyze_patient(args.patient_dir, args.output, args.raw_output)
+
+
+if __name__ == "__main__":
+    main()
