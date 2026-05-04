@@ -8,14 +8,18 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=02:00:00
 #SBATCH --array=0-97%4
-#SBATCH --output=/dfs/user/moritzs/patientwhisperer/results/logs/step3_patient_%A_%a.out
-#SBATCH --error=/dfs/user/moritzs/patientwhisperer/results/logs/step3_patient_%A_%a.err
+#SBATCH --chdir=/sailhome/moritzs/patientwhisperer/feat-cellwhisperer-live-scoring/experiments/agent_lbcl_bench_direction_specific
+#SBATCH --output=results/logs/step3_patient_%A_%a.out
+#SBATCH --error=results/logs/step3_patient_%A_%a.err
 
-# LBCL-Bench with Spatial: Per-patient agent analysis on SNAP
+# LBCL-Bench: Per-patient agent analysis on SNAP (legacy entry point)
+# For active runs use scripts/run_step3_gene_expr_snap.sh.
 #
 # Submit (claude CLI uses OAuth login, no API key needed):
-#   ssh ilc 'sbatch /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_with_spatial/run_step3_patients_snap.sh'
+#   ssh ilc 'sbatch /sailhome/moritzs/patientwhisperer/feat-cellwhisperer-live-scoring/experiments/agent_lbcl_bench_direction_specific/run_step3_patients_snap.sh'
 set -e
+
+mkdir -p results/logs
 
 # Node.js / claude CLI via pixi
 export PIXI_HOME=/lfs/local/0/$USER/.pixi
@@ -29,7 +33,7 @@ export PATH=$npm_config_prefix/bin:$PATH
 NODE_DIR=$(pixi exec --spec nodejs -- bash -c 'dirname $(which node)')
 export PATH=$NODE_DIR:$PATH
 
-cd /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_with_spatial
+# --chdir already moved us to the experiment directory
 
 # Read patient IDs
 mapfile -t PATIENT_IDS < data/patients/patient_ids.txt

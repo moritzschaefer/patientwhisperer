@@ -7,16 +7,19 @@
 #SBATCH --gres=gpu:1
 #SBATCH --time=02:00:00
 #SBATCH --array=0-97%4
-#SBATCH --output=/dfs/user/moritzs/patientwhisperer/results/logs/step3_gene_expr_%A_%a.out
-#SBATCH --error=/dfs/user/moritzs/patientwhisperer/results/logs/step3_gene_expr_%A_%a.err
+#SBATCH --chdir=/sailhome/moritzs/patientwhisperer/feat-cellwhisperer-live-scoring/experiments/agent_lbcl_bench_direction_specific
+#SBATCH --output=results/logs/step3_gene_expr_%A_%a.out
+#SBATCH --error=results/logs/step3_gene_expr_%A_%a.err
 
 # Per-patient agent analysis with gene expression + CellWhisperer scoring
 #
 # Prerequisite: cellxgene.h5ad must exist at the path in shared_context.md
 #
 # Submit:
-#   ssh ilc 'sbatch /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_direction_specific/scripts/run_step3_gene_expr_snap.sh'
+#   ssh ilc 'sbatch /sailhome/moritzs/patientwhisperer/feat-cellwhisperer-live-scoring/experiments/agent_lbcl_bench_direction_specific/scripts/run_step3_gene_expr_snap.sh'
 set -e
+
+mkdir -p results/logs
 
 RESULTS_DIR=results/step3_gene_expr
 
@@ -32,7 +35,7 @@ export PATH=$npm_config_prefix/bin:$PATH
 NODE_DIR=$(pixi exec --spec nodejs -- bash -c 'dirname $(which node)')
 export PATH=$NODE_DIR:$PATH
 
-cd /sailhome/moritzs/patientwhisperer/experiments/agent_lbcl_bench_direction_specific
+# --chdir already moved us to the experiment directory
 
 # Read patient IDs
 mapfile -t PATIENT_IDS < data/patients/patient_ids.txt

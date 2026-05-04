@@ -4,35 +4,43 @@ Per-patient AI analysis of CAR T cell therapy resistance mechanisms. An AI agent
 
 ## Project structure
 
-```
-src/patientwhisperer/
-  agent.py                  # Agent dispatch: prompt assembly, Claude Code invocation,
-                            #   JSON extraction, analyze_patient() entry point
-  run_experiment.py         # Batch orchestration: dispatch agents + evaluate
-  eval/                     # LBCL-Bench evaluation suite (LLM matching, specificity)
-  prompts/
-    shared_context.md       # Data guide: h5ad paths, CellWhisperer scoring,
-                            #   gene expression analysis, spatial features
-    patient-analyst-instructions.md
-                            # 4-phase analysis protocol
-                            #   (profile → hypothesize → falsify → synthesize)
-  data_prep/
-    prepare_infusion_features.py   # CellWhisperer scoring → per-patient CSVs
-    prepare_spatial_features.py    # CosMx → cell type proportions + proximities
-    merge_patient_data.py          # Merge modalities into patient directories
-  results_viewer/           # Interactive HTML trace browser
+This repo uses a bare-repo + worktrees layout. `results/` and `scratch/` live at the PROJECT level (above worktrees), shared across branches. Per-experiment symlinks inside each worktree's `experiments/<exp>/` redirect into the project-level dirs, so code uses relative `results/` paths transparently.
 
-experiments/
-  agent_lbcl_bench_with_spatial/        # Baseline (pre-CW-live, frozen)
-  agent_lbcl_bench_with_live_cw/        # Live CW scoring + gene expression
-  agent_lbcl_bench_direction_specific/  # Latest: PR review fixes applied
-    run_agent.py            # Thin wrapper → analyze_patient()
-    scripts/                # SLURM submission scripts
-    data/                   # Per-patient data (symlinked)
-    results/                # Agent outputs + evaluation
-
-metadata/                   # Clinical and TME metadata CSVs
 ```
+~/code/patientwhisperer/                     # PROJECT_DIR
+├── .bare/                                   # bare git repo
+├── lsyncd.conf                              # ONLY at project root
+├── results/                                 # SHARED across worktrees (post-processing)
+│   └── <experiment>/
+├── scratch/                                 # SHARED across worktrees
+└── <branch>/                                # WORKTREE
+    ├── src/patientwhisperer/
+    │   agent.py                  # Agent dispatch + analyze_patient() entry point
+    │   run_experiment.py         # Batch orchestration
+    │   eval/                     # LBCL-Bench evaluation
+    │   prompts/
+    │     shared_context.md
+    │     patient-analyst-instructions.md
+    │   data_prep/
+    │     prepare_infusion_features.py
+    │     prepare_spatial_features.py
+    │     merge_patient_data.py
+    │   results_viewer/           # Interactive HTML trace browser
+    └── experiments/
+        └── <experiment>/
+            run_agent.py          # Thin wrapper → analyze_patient()
+            scripts/              # SLURM submission scripts
+            data/                 # Per-patient data (symlinked)
+            results -> ../../../results/<experiment>
+            scratch -> ../../../scratch/<experiment>
+```
+
+**Source of truth**: SNAP/Sherlock is the canonical location for results (project-level dir is a symlink to `/dfs/`/`$OAK`). The local laptop's `results/` is for post-processing copies (rsync from cluster as needed). See [Toolchain and Workflow](https://...) for setup details.
+
+Active experiments (in `feat-cellwhisperer-live-scoring/experiments/`):
+- `agent_lbcl_bench_with_spatial/`: baseline (pre-CW-live, frozen)
+- `agent_lbcl_bench_with_live_cw/`: live CW scoring + gene expression (frozen)
+- `agent_lbcl_bench_direction_specific/`: latest, PR review fixes applied
 
 ## Running an analysis
 
