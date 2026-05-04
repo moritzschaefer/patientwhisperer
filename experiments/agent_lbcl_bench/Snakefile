@@ -1,0 +1,229 @@
+"""
+LBCL-Bench: Agent-based benchmark for CAR T cell mechanism discovery.
+
+Runs on Sherlock via SLURM. Agents are dispatched via apptainer openeuler/opencode.
+CellWhisperer analysis runs via conda run -n cellwhisperer python.
+
+Usage (from a SLURM compute node):
+    conda run -n cellwhisperer snakemake --profile sm7_slurm -j 10 all
+"""
+import pandas as pd
+
+BENCH_CSV = "data/lbcl_bench_filtered.csv"
+
+# Load detectable mechanism IDs
+_bench = pd.read_csv(BENCH_CSV)
+MECHANISM_IDS = _bench[
+    _bench["detectable_with_infusion_product"] | _bench["detectable_with_clinical"]
+]["mechanism_id"].tolist()
+
+
+rule all:
+    input:
+        "results/step1v2/step1v2_verification.csv",
+        "results/step2/discoveries.json",
+        "results/step2/recall_evaluation.csv",
+
+rule step1:
+    input:
+        "results/step1v2/step1v2_verification.csv",
+
+rule step2:
+    input:
+        "results/step2/recall_evaluation.csv",
+
+rule step3:
+    input:
+        "results/step3_evaluation/bench_mechanism_patient_counts.csv",
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 1v2: Pre-registered Mechanism Verification (direction-blinded)
+# ══════════════════════════════════════════════════════════════════════════════
+
+rule generate_queries:
+    """Generate 10 pre-registered CellWhisperer queries per mechanism (opencode agent, direction-blinded)."""
+    input:
+        bench=BENCH_CSV,
+        script="step1v2_generate_queries.py",
+    output:
+        queries="data/step1v2_queries.json",
+    resources:
+        mem_mb=4000,
+        runtime=60,
+        slurm="cpus-per-task=2 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 step1v2_generate_queries.py
+        """
+
+rule verify_mechanisms:
+    """Deterministic verification: score pre-registered queries, two-sided MWU, Bonferroni correction."""
+    input:
+        queries="data/step1v2_queries.json",
+        script="step1v2_verify.py",
+    output:
+        csv="results/step1v2/step1v2_verification.csv",
+        all_tests="results/step1v2/step1v2_all_tests.csv",
+    resources:
+        mem_mb=32000,
+        runtime=30,
+        slurm="cpus-per-task=4 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        conda run -n cellwhisperer python step1v2_verify.py
+        """
+
+# -- Old Step 1 (agent-based, kept for comparison) --
+
+rule verify_mechanism_old:
+    """[OLD] Dispatch an agent to verify a single LBCL-Bench mechanism."""
+    input:
+        bench=BENCH_CSV,
+    output:
+        json="results/step1/{mid}.json",
+        raw="results/step1/{mid}_raw.txt",
+    resources:
+        mem_mb=32000,
+        runtime=75,
+        slurm="cpus-per-task=4 partition=cmackall account=zinaida",
+    shell:
+        """
+        python3 {workflow.basedir}/run_agent.py verify \
+            --mechanism {wildcards.mid} \
+            --bench-csv {input.bench} \
+            --output {output.json} \
+            --raw-output {output.raw}
+        """
+
+rule aggregate_step1_old:
+    """[OLD] Aggregate all mechanism verification results into a single CSV."""
+    input:
+        jsons=expand("results/step1/{mid}.json", mid=MECHANISM_IDS),
+    output:
+        csv="results/step1/step1_verification.csv",
+    run:
+        import json
+        rows = []
+        for f in input.jsons:
+            with open(f) as fh:
+                rows.append(json.load(fh))
+        pd.DataFrame(rows).to_csv(output.csv, index=False)
+        print(f"Aggregated {len(rows)} mechanism results")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 2: Open-Ended Discovery
+# ══════════════════════════════════════════════════════════════════════════════
+
+rule run_discovery:
+    """Dispatch the discovery agent for open-ended mechanism finding."""
+    output:
+        json="results/step2/discoveries.json",
+        raw="results/step2/discovery_raw.txt",
+    resources:
+        mem_mb=80000,
+        runtime=180,
+        slurm="cpus-per-task=8 partition=cmackall account=zinaida",
+    shell:
+        """
+        python3 {workflow.basedir}/run_agent.py discover \
+            --output {output.json} \
+            --raw-output {output.raw}
+        """
+
+rule evaluate_recall:
+    """Evaluate discovery recall against LBCL-Bench using LLM matching."""
+    input:
+        discoveries="results/step2/discoveries.json",
+        bench=BENCH_CSV,
+    output:
+        csv="results/step2/recall_evaluation.csv",
+    resources:
+        mem_mb=4000,
+        runtime=30,
+        slurm="cpus-per-task=2 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        conda run -n cellwhisperer python step2_evaluate_recall.py
+        """
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# STEP 3: Per-Patient Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+
+checkpoint prepare_patients:
+    """Score cells with CellWhisperer and create per-patient data directories."""
+    output:
+        patient_list="data/patients/patient_ids.txt",
+    resources:
+        mem_mb=64000,
+        runtime=60,
+        slurm="cpus-per-task=8 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        source /home/groups/zinaida/moritzs/miniforge3/etc/profile.d/conda.sh && conda activate cellwhisperer && python step3_prepare_patients.py --output-dir data/patients
+        """
+
+def get_patient_outputs(wildcards):
+    """After prepare_patients completes, read patient_ids.txt to get the list."""
+    checkpoint_output = checkpoints.prepare_patients.get(**wildcards)
+    with open(checkpoint_output.patient_list) as f:
+        patient_ids = [line.strip() for line in f if line.strip()]
+    return expand("results/step3_per_patient/{pid}.json", pid=patient_ids)
+
+rule analyze_patient:
+    """Dispatch an agent to analyze a single patient."""
+    input:
+        patient_dir="data/patients/{pid}",
+    output:
+        json="results/step3_per_patient/{pid}.json",
+        raw="results/step3_per_patient/{pid}_raw.txt",
+    resources:
+        mem_mb=80000,
+        runtime=60,
+        slurm="cpus-per-task=8 partition=cmackall account=zinaida",
+    shell:
+        """
+        python3 {workflow.basedir}/run_agent.py patient \
+            --patient-dir {input.patient_dir} \
+            --output {output.json} \
+            --raw-output {output.raw}
+        """
+
+rule aggregate_step3:
+    """Aggregate all per-patient results."""
+    input:
+        jsons=get_patient_outputs,
+    output:
+        csv="results/step3_per_patient/all_patients.csv",
+    run:
+        import json
+        rows = []
+        for f in input.jsons:
+            with open(f) as fh:
+                rows.append(json.load(fh))
+        pd.DataFrame(rows).to_csv(output.csv, index=False)
+        print(f"Aggregated {len(rows)} patient results")
+
+rule evaluate_step3:
+    """Evaluate per-patient mechanism recovery against LBCL-Bench."""
+    input:
+        patients="results/step3_per_patient/all_patients.csv",
+        bench=BENCH_CSV,
+    output:
+        csv="results/step3_evaluation/bench_mechanism_patient_counts.csv",
+    resources:
+        mem_mb=8000,
+        runtime=120,
+        slurm="cpus-per-task=4 partition=cmackall account=zinaida",
+    shell:
+        """
+        cd {workflow.basedir}
+        python3 step3_evaluate.py
+        """
